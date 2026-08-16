@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const otpSchema = new mongoose.Schema({
   email: {
@@ -52,12 +53,23 @@ const otpSchema = new mongoose.Schema({
 otpSchema.index({ email: 1, purpose: 1, isVerified: 1 });
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+// Hash OTP before saving
+otpSchema.pre('save', async function () {
+  if (!this.isModified('otp')) return;
+  const salt = await bcrypt.genSalt(10);
+  this.otp = await bcrypt.hash(this.otp, salt);
+});
+
 otpSchema.methods.isExpired = function () {
   return new Date() > this.expiresAt;
 };
 
 otpSchema.methods.maxAttemptsReached = function () {
   return this.attempts >= 3;
+};
+
+otpSchema.methods.compareOTP = async function (candidateOTP) {
+  return await bcrypt.compare(candidateOTP, this.otp);
 };
 
 const OTP = mongoose.model('OTP', otpSchema);

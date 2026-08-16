@@ -9,6 +9,44 @@
  */
 
 const axios = require('axios');
+const xss = require('xss');
+
+/**
+ * Sanitize string to prevent XSS attacks
+ * @param {string} str - String to sanitize
+ * @returns {string} Sanitized string
+ */
+const sanitizeString = (str) => {
+  if (typeof str !== 'string') return str;
+  return xss(str, {
+    whiteList: {}, // No HTML tags allowed
+    stripIgnoreTag: true,
+    stripIgnoreTagBody: ['script'],
+  });
+};
+
+/**
+ * Sanitize job object recursively
+ * @param {Object} job - Job object to sanitize
+ * @returns {Object} Sanitized job object
+ */
+const sanitizeJob = (job) => {
+  const sanitized = { ...job };
+  
+  const stringFields = ['title', 'company', 'location', 'description', 'category', 'applyUrl'];
+  stringFields.forEach(field => {
+    if (sanitized[field]) {
+      sanitized[field] = sanitizeString(sanitized[field]);
+    }
+  });
+
+  // Sanitize arrays of strings
+  if (sanitized.tags && Array.isArray(sanitized.tags)) {
+    sanitized.tags = sanitized.tags.map(tag => sanitizeString(tag));
+  }
+
+  return sanitized;
+};
 
 /**
  * Normalize job data from various APIs to unified schema
@@ -115,7 +153,8 @@ const normalizeJob = (job, source) => {
       throw new Error(`Unknown source: ${source}`);
   }
 
-  return normalized;
+  // Sanitize the normalized job to prevent XSS
+  return sanitizeJob(normalized);
 };
 
 /**

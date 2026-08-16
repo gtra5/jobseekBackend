@@ -1,6 +1,7 @@
 const otpGenerator = require('otp-generator');
 const nodemailer = require('nodemailer');
 const OTP = require('../models/OTP');
+const { logAuthEvent } = require('../utils/logger');
 
 class OTPService {
   constructor() {
@@ -145,13 +146,17 @@ class OTPService {
 
       otpRecord.attempts += 1;
 
-      if (otpRecord.otp !== otp) {
+      const isMatch = await otpRecord.compareOTP(otp);
+      if (!isMatch) {
         await otpRecord.save();
+        logAuthEvent.otpFailed(email, purpose, 'Unknown', 'Invalid OTP');
         throw new Error('Invalid OTP. Please try again.');
       }
 
       otpRecord.isVerified = true;
       await otpRecord.save();
+
+      logAuthEvent.otpVerified(email, purpose, 'Unknown');
 
       return true;
     } catch (error) {
@@ -165,11 +170,21 @@ class OTPService {
    * @param {string} userId - User ID (for reference, not stored in OTP model)
    * @param {string} email - Recipient email address
    * @param {string} purpose - Purpose of OTP
-   * @returns {Promise<void>}
+   * @param {string} ip - IP address of the request
+   * @returns {Promise<string>}
    */
-  async generateAndSendOTP(userId, email, purpose) {
-    const otp = await this.createOTP(email, purpose);
-    await this.sendOTP(email, otp, purpose);
+  async generateAndSendOTP(userId, email, purpose, ip) {
+    try {
+      const otp = await this.createOTP(email, purpose);
+      await this.sendOTP(email, otp, purpose);
+      
+      logAuthEvent.otpRequested(email, purpose, ip);
+      
+      return otp;
+    } catch (error) {
+      console.error('Error generating and sending OTP:', error);
+      throw error;
+    }
   }
 
   /**

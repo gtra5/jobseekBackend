@@ -77,8 +77,15 @@ const errorHandler = (err, req, res, next) => {
   error.message = err.message;
   error.statusCode = err.statusCode || 500;
 
-  // Log error for debugging
-  console.error('Error:', err);
+  // Log full error details server-side for debugging
+  console.error('Error:', {
+    message: err.message,
+    stack: err.stack,
+    statusCode: err.statusCode,
+    url: req.originalUrl,
+    method: req.method,
+    ip: req.ip,
+  });
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
@@ -109,7 +116,12 @@ const errorHandler = (err, req, res, next) => {
     error = { ...error, ...jwtExpiredError };
   }
 
-  // Send error response
+  // In production, hide detailed error messages
+  if (process.env.NODE_ENV === 'production') {
+    error.message = 'An error occurred. Please try again later.';
+  }
+
+  // Send error response (no stack traces in client response)
   if (error.errors) {
     return ApiResponse.validationError(res, error.message, error.errors);
   }

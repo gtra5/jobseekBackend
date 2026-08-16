@@ -29,12 +29,18 @@ const sendEmail = async (options) => {
   try {
     const transporter = createTransporter();
 
+    // Sanitize user-provided input to prevent header injection
+    const sanitizeString = (str) => {
+      if (typeof str !== 'string') return str;
+      return str.replace(/[\r\n]/g, ' ').trim();
+    };
+
     const mailOptions = {
       from: process.env.EMAIL_FROM || `"Jobseek" <${process.env.EMAIL_USER}>`,
       to: options.to,
-      subject: options.subject,
+      subject: sanitizeString(options.subject),
       html: options.html,
-      text: options.text,
+      text: options.text ? sanitizeString(options.text) : undefined,
     };
 
     const info = await transporter.sendMail(mailOptions);

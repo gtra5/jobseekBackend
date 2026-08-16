@@ -8,10 +8,10 @@ const jwt = require('jsonwebtoken');
 /**
  * Generate access token
  * @param {Object} payload - User data to encode in token
- * @param {string} expiresIn - Token expiration time (default: '7d')
+ * @param {string} expiresIn - Token expiration time (default: '15m' for security)
  * @returns {string} JWT token
  */
-const generateAccessToken = (payload, expiresIn = '7d') => {
+const generateAccessToken = (payload, expiresIn = '15m') => {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn });
 };
 

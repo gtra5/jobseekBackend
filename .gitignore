@@ -13,6 +13,9 @@ yarn-error.log*
 logs/
 *.log
 
+# Security documentation (contains sensitive procedures)
+SECURITY_*.md
+
 # OS files
 .DS_Store
 Thumbs.db

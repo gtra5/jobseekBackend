@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const Job = require("../models/Job");
 const { body, validationResult } = require("express-validator");
+const { authenticate } = require("../middleware/authMiddleware");
+const { isEmployer } = require("../middleware/roleMiddleware");
 
 // Validation middleware
 const validateJobInput = [
@@ -76,8 +78,8 @@ const validateJobInput = [
 
 // @route   POST /api/jobs
 // @desc    Create a new job
-// @access  Public (should be protected with auth in production)
-router.post("/", validateJobInput, async (req, res) => {
+// @access  Private (Employer only)
+router.post("/", authenticate, isEmployer, validateJobInput, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -171,8 +173,8 @@ router.get("/", async (req, res) => {
 // ✅ ADDED ROUTE: Must be defined BEFORE /:id
 // @route   GET /api/jobs/employer/my-jobs
 // @desc    Get all jobs posted by the employer
-// @access  Public (should be protected with auth middleware in production)
-router.get("/employer/my-jobs", async (req, res) => {
+// @access  Private (Employer only)
+router.get("/employer/my-jobs", authenticate, isEmployer, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 10;
     
@@ -245,8 +247,8 @@ router.get("/:id", async (req, res) => {
 
 // @route   PUT /api/jobs/:id
 // @desc    Update a job
-// @access  Public (should be protected with auth in production)
-router.put("/:id", validateJobInput, async (req, res) => {
+// @access  Private (Employer only)
+router.put("/:id", authenticate, isEmployer, validateJobInput, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -314,8 +316,8 @@ router.put("/:id", validateJobInput, async (req, res) => {
 
 // @route   DELETE /api/jobs/:id
 // @desc    Delete a job
-// @access  Public (should be protected with auth in production)
-router.delete("/:id", async (req, res) => {
+// @access  Private (Employer only)
+router.delete("/:id", authenticate, isEmployer, async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
 

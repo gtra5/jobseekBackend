@@ -7,6 +7,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
+const cookieParser = require('cookie-parser');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
 // Import routes
@@ -37,10 +39,21 @@ const corsOptions = {
       'http://localhost:5175',
     ];
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
+    // In production, only allow the configured frontend URL
+    if (process.env.NODE_ENV === 'production') {
+      const productionOrigin = process.env.FRONTEND_URL;
+      if (origin === productionOrigin) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // In development, allow all localhost origins
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
     }
   },
   credentials: true,
@@ -52,6 +65,12 @@ app.use(cors(corsOptions));
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Cookie parser for httpOnly cookies
+app.use(cookieParser());
+
+// NoSQL injection protection
+app.use(mongoSanitize());
 
 // Rate limiting
 const limiter = rateLimit({
