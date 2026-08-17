@@ -53,15 +53,24 @@ const register = asyncHandler(async (req, res) => {
   // Remove password from response
   user.password = undefined;
 
-  // Set refresh token as httpOnly cookie
+  // Set access token as httpOnly cookie (short-lived for security)
+  res.cookie('accessToken', accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    maxAge: 15 * 60 * 1000, // 15 minutes
+  });
+
+  // Set refresh token as httpOnly cookie (long-lived)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
   return ApiResponse.created(res, 'User registered successfully. Please verify your email.', {
+    accessToken,
     user: {
       id: user._id,
       email: user.email,
@@ -70,7 +79,6 @@ const register = asyncHandler(async (req, res) => {
       lastName: user.lastName,
       isVerified: user.isVerified,
     },
-    accessToken,
   });
 });
 
@@ -119,17 +127,28 @@ const login = asyncHandler(async (req, res) => {
   // Remove password from response
   user.password = undefined;
 
-  // Set refresh token as httpOnly cookie
+  // Set access token as httpOnly cookie (short-lived for security)
+  res.cookie('accessToken', accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    maxAge: 15 * 60 * 1000, // 15 minutes
+  });
+
+  // Set refresh token as httpOnly cookie (long-lived)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
   logAuthEvent.loginSuccess(user._id, user.email, req.ip, req.headers['user-agent']);
 
+  // Return accessToken in body so frontend can attach it as a Bearer header.
+  // It is also set as an httpOnly cookie for added security.
   return ApiResponse.success(res, 200, 'Login successful', {
+    accessToken,
     user: {
       id: user._id,
       email: user.email,
@@ -139,7 +158,6 @@ const login = asyncHandler(async (req, res) => {
       isVerified: user.isVerified,
       profileCompletion: user.getProfileCompletion(),
     },
-    accessToken,
   });
 });
 
@@ -158,8 +176,17 @@ const logout = asyncHandler(async (req, res) => {
     );
   }
 
-  // Clear the httpOnly cookie
-  res.clearCookie('refreshToken');
+  // Clear the httpOnly cookies
+  res.clearCookie('accessToken', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+  });
+  res.clearCookie('refreshToken', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+  });
   
   logAuthEvent.logout(req.user?.id, req.ip, req.headers['user-agent']);
   
