@@ -17,7 +17,7 @@ const {
  * Aggregate jobs from all external sources
  */
 const aggregateExternalJobs = asyncHandler(async (req, res) => {
-  const { keywords, location, jobType, category, minSalary, maxSalary, sources } = req.query;
+  const { keywords, location, jobType, category, minSalary, maxSalary, sources, days } = req.query;
 
   // Parse sources if provided as comma-separated string
   let sourcesArray = null;
@@ -36,6 +36,7 @@ const aggregateExternalJobs = asyncHandler(async (req, res) => {
     page: parseInt(req.query.page) || 1,
     limit: parseInt(req.query.limit) || 10,
     remote: req.query.remote === 'true',
+    days: days ? parseInt(days) : 30, // Default to 30 days if not specified
   };
 
   const aggregatedJobs = await aggregateJobs(params, sourcesArray);
@@ -55,7 +56,7 @@ const aggregateExternalJobs = asyncHandler(async (req, res) => {
  * Get flattened list of all external jobs
  */
 const getAllExternalJobs = asyncHandler(async (req, res) => {
-  const { keywords, location, jobType, category, minSalary, maxSalary, sources } = req.query;
+  const { keywords, location, jobType, category, minSalary, maxSalary, sources, days } = req.query;
 
   // Parse sources if provided as comma-separated string
   let sourcesArray = null;
@@ -74,6 +75,7 @@ const getAllExternalJobs = asyncHandler(async (req, res) => {
     page: parseInt(req.query.page) || 1,
     limit: parseInt(req.query.limit) || 10,
     remote: req.query.remote === 'true',
+    days: days ? parseInt(days) : 30, // Default to 30 days if not specified
   };
 
   const allJobs = await getAllJobs(params, sourcesArray);
@@ -134,7 +136,7 @@ const getJobsBySource = asyncHandler(async (req, res) => {
     return ApiResponse.badRequest(res, `Invalid source. Valid sources: ${validSources.join(', ')}`);
   }
 
-  const { keywords, location, page = 1, limit = 10 } = req.query;
+  const { keywords, location, page = 1, limit = 10, days } = req.query;
 
   const params = {
     keywords: keywords || '',
@@ -142,6 +144,7 @@ const getJobsBySource = asyncHandler(async (req, res) => {
     page: parseInt(page),
     limit: parseInt(limit),
     remote: req.query.remote === 'true',
+    days: days ? parseInt(days) : 30, // Default to 30 days if not specified
   };
 
   const aggregated = await aggregateJobs(params, [source.toLowerCase()]);

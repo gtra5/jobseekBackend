@@ -12,6 +12,34 @@ const axios = require('axios');
 const xss = require('xss');
 
 /**
+ * Check if a job posting is recent (within specified days)
+ * @param {string} postedAt - Job posting date string
+ * @param {number} days - Number of days to consider as recent (default: 30)
+ * @returns {boolean} True if job is recent
+ */
+const isRecentJob = (postedAt, days = 30) => {
+  if (!postedAt) return false;
+  
+  const jobDate = new Date(postedAt);
+  if (isNaN(jobDate.getTime())) return false;
+  
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - days);
+  
+  return jobDate >= cutoffDate;
+};
+
+/**
+ * Filter jobs to only include recent postings
+ * @param {Array} jobs - Array of job objects
+ * @param {number} days - Number of days to consider as recent (default: 30)
+ * @returns {Array} Filtered array of recent jobs
+ */
+const filterRecentJobs = (jobs, days = 30) => {
+  return jobs.filter(job => isRecentJob(job.postedAt, days));
+};
+
+/**
  * Sanitize string to prevent XSS attacks
  * @param {string} str - String to sanitize
  * @returns {string} Sanitized string
@@ -257,7 +285,7 @@ const parseJSearchSalary = (min, max, currency = 'USD') => {
  */
 const fetchAdzunaJobs = async (params = {}) => {
   try {
-    const { keywords = '', location = '', page = 1, limit = 10 } = params;
+    const { keywords = '', location = '', page = 1, limit = 10, days = 30 } = params;
     
     const appId = process.env.ADZUNA_APP_ID;
     const appKey = process.env.ADZUNA_APP_KEY;
@@ -276,11 +304,13 @@ const fetchAdzunaJobs = async (params = {}) => {
         where: location,
         'content-type': 'application/json',
         results_per_page: limit,
+        days_old: days, // Adzuna supports days_old parameter
       },
     });
 
     if (response.data?.results) {
-      return response.data.results.map(job => normalizeJob(job, 'adzuna'));
+      const jobs = response.data.results.map(job => normalizeJob(job, 'adzuna'));
+      return filterRecentJobs(jobs, days);
     }
     return [];
   } catch (error) {
@@ -296,7 +326,7 @@ const fetchAdzunaJobs = async (params = {}) => {
  */
 const fetchFindworkJobs = async (params = {}) => {
   try {
-    const { keywords = '', location = '', remote = false, page = 1 } = params;
+    const { keywords = '', location = '', remote = false, page = 1, days = 30 } = params;
     
     const apiKey = process.env.FINDWORK_API_KEY;
 
@@ -319,7 +349,8 @@ const fetchFindworkJobs = async (params = {}) => {
     });
 
     if (response.data?.results) {
-      return response.data.results.map(job => normalizeJob(job, 'findwork'));
+      const jobs = response.data.results.map(job => normalizeJob(job, 'findwork'));
+      return filterRecentJobs(jobs, days);
     }
     return [];
   } catch (error) {
@@ -335,7 +366,7 @@ const fetchFindworkJobs = async (params = {}) => {
  */
 const fetchRemotiveJobs = async (params = {}) => {
   try {
-    const { keywords = '', category = '' } = params;
+    const { keywords = '', category = '', days = 30 } = params;
     
     let url = 'https://remotive.com/api/remote-jobs';
     if (category) {
@@ -357,7 +388,8 @@ const fetchRemotiveJobs = async (params = {}) => {
         );
       }
       
-      return jobs.map(job => normalizeJob(job, 'remotive'));
+      const normalizedJobs = jobs.map(job => normalizeJob(job, 'remotive'));
+      return filterRecentJobs(normalizedJobs, days);
     }
     return [];
   } catch (error) {
@@ -373,7 +405,7 @@ const fetchRemotiveJobs = async (params = {}) => {
  */
 const fetchArbeitnowJobs = async (params = {}) => {
   try {
-    const { keywords = '' } = params;
+    const { keywords = '', days = 30 } = params;
     
     const url = 'https://www.arbeitnow.com/api/job-board-api';
     const response = await axios.get(url);
@@ -391,7 +423,8 @@ const fetchArbeitnowJobs = async (params = {}) => {
         );
       }
       
-      return jobs.map(job => normalizeJob(job, 'arbeitnow'));
+      const normalizedJobs = jobs.map(job => normalizeJob(job, 'arbeitnow'));
+      return filterRecentJobs(normalizedJobs, days);
     }
     return [];
   } catch (error) {
@@ -496,4 +529,6 @@ module.exports = {
   getAllJobs,
   getRemotiveCategories,
   getSourceStatus,
+  isRecentJob,
+  filterRecentJobs,
 };
