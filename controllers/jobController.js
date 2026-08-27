@@ -107,11 +107,19 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
   // Remote filter
   if (remote === 'true') {
-    query.$or = [
+    const remoteConditions = [
       { jobType: 'Remote' },
       { jobType: 'Hybrid' },
       { location: { $regex: 'remote', $options: 'i' } },
     ];
+
+    if (query.$or) {
+      // Combine with existing keyword $or instead of overwriting it
+      query.$and = [{ $or: query.$or }, { $or: remoteConditions }];
+      delete query.$or;
+    } else {
+      query.$or = remoteConditions;
+    }
   }
 
   // Sort options
