@@ -100,6 +100,17 @@ const jobSchema = new mongoose.Schema(
   }
 );
 
+// Ensure salary.max is not less than salary.min when both are provided.
+// Individual non-negative checks on min/max stay as field-level validators above;
+// bounds that are missing are left untouched (no cross-field check fires).
+jobSchema.pre('validate', function (next) {
+  const salary = this.salary || {};
+  if (salary.min != null && salary.max != null && salary.max < salary.min) {
+    this.invalidate('salary.max', 'salary.max must be greater than or equal to salary.min');
+  }
+  next();
+});
+
 // Index for better search performance
 jobSchema.index({ title: 'text', description: 'text', skills: 'text' });
 jobSchema.index({ category: 1 });
