@@ -7,7 +7,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
 const cookieParser = require('cookie-parser');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
@@ -70,7 +69,28 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 // NoSQL injection protection
-app.use(mongoSanitize());
+// Manual sanitization for Express 5.x compatibility
+app.use((req, res, next) => {
+  const sanitize = (obj) => {
+    if (!obj || typeof obj !== 'object') return obj;
+    
+    const sanitized = Array.isArray(obj) ? [] : {};
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        // Replace MongoDB operators with safe characters
+        const sanitizedKey = key.replace(/^\$/, '_');
+        sanitized[sanitizedKey] = typeof obj[key] === 'object' ? sanitize(obj[key]) : obj[key];
+      }
+    }
+    return sanitized;
+  };
+
+  if (req.body) req.body = sanitize(req.body);
+  if (req.query) req.query = sanitize(req.query);
+  if (req.params) req.params = sanitize(req.params);
+  
+  next();
+});
 
 // Rate limiting
 const limiter = rateLimit({
