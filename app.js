@@ -73,22 +73,30 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   const sanitize = (obj) => {
     if (!obj || typeof obj !== 'object') return obj;
-    
+
     const sanitized = Array.isArray(obj) ? [] : {};
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        // Replace MongoDB operators with safe characters
-        const sanitizedKey = key.replace(/^\$/, '_');
-        sanitized[sanitizedKey] = typeof obj[key] === 'object' ? sanitize(obj[key]) : obj[key];
-      }
+    // Object.keys() works regardless of prototype (including the
+    // null-prototype objects Node's querystring parser returns for
+    // req.query in Express 5), unlike obj.hasOwnProperty(key).
+    for (const key of Object.keys(obj)) {
+      // Replace MongoDB operators with safe characters
+      const sanitizedKey = key.replace(/^\$/, '_');
+      sanitized[sanitizedKey] = typeof obj[key] === 'object' ? sanitize(obj[key]) : obj[key];
     }
     return sanitized;
   };
 
   if (req.body) req.body = sanitize(req.body);
-  if (req.query) req.query = sanitize(req.query);
   if (req.params) req.params = sanitize(req.params);
-  
+
+  // req.query is a getter-only property in Express 5 — assigning to it
+  // (req.query = ...) throws. Sanitize in place instead of replacing it.
+  if (req.query && typeof req.query === 'object') {
+    const sanitizedQuery = sanitize(req.query);
+    for (const key of Object.keys(req.query)) delete req.query[key];
+    Object.assign(req.query, sanitizedQuery);
+  }
+
   next();
 });
 
