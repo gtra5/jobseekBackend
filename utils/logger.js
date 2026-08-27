@@ -1,17 +1,63 @@
 /**
- * Security Logger
- * Logs authentication events, admin actions, and security-relevant events
- * Never logs sensitive data like passwords, tokens, or full PII
+ * Centralized Logger
+ * Uses Winston for structured JSON logging with log levels (info, warn, error)
  */
 
-const fs = require('fs');
+const winston = require('winston');
 const path = require('path');
+const fs = require('fs');
 
 // Ensure logs directory exists
 const logsDir = path.join(__dirname, '../logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
+
+// Define log format
+const logFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  winston.format.json()
+);
+
+// Create Winston logger
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: logFormat,
+  transports: [
+    // Write all logs to combined.log
+    new winston.transports.File({
+      filename: path.join(logsDir, 'combined.log'),
+      maxsize: 5242880, // 5MB
+      maxFiles: 5,
+    }),
+    // Write error logs to error.log
+    new winston.transports.File({
+      filename: path.join(logsDir, 'error.log'),
+      level: 'error',
+      maxsize: 5242880, // 5MB
+      maxFiles: 5,
+    }),
+  ],
+});
+
+// Add console transport for development
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      ),
+    })
+  );
+}
+
+/**
+ * Security Logger
+ * Logs authentication events, admin actions, and security-relevant events
+ * Never logs sensitive data like passwords, tokens, or full PII
+ */
 
 const logFile = path.join(logsDir, 'security.log');
 
@@ -125,6 +171,7 @@ const logAdminAction = {
 };
 
 module.exports = {
+  logger,
   logAuthEvent,
   logAdminAction,
   writeLog,

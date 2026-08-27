@@ -1,11 +1,16 @@
 /**
  * File Upload Middleware
- * Handles file uploads using Multer with Cloudinary storage
+ * Handles file uploads using Multer with memory storage for S3/R2 or Cloudinary storage
  */
 
 const multer = require('multer');
 const { createCloudinaryStorage } = require('../config/cloudinary');
 const ApiResponse = require('../utils/apiResponse');
+
+/**
+ * Configure memory storage for S3/R2 uploads
+ */
+const memoryStorage = multer.memoryStorage();
 
 /**
  * Configure storage for resume uploads
@@ -43,7 +48,20 @@ const getFileFilter = (type) => {
 };
 
 /**
- * Multer upload configuration for resumes
+ * Multer upload configuration for memory storage (S3/R2)
+ */
+const uploadToMemory = (type) => {
+  return multer({
+    storage: memoryStorage,
+    fileFilter: getFileFilter(type),
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB limit
+    },
+  });
+};
+
+/**
+ * Multer upload configuration for resumes (Cloudinary)
  */
 const uploadResume = multer({
   storage: resumeStorage,
@@ -54,7 +72,7 @@ const uploadResume = multer({
 }).single('resume');
 
 /**
- * Multer upload configuration for company logos
+ * Multer upload configuration for company logos (Cloudinary)
  */
 const uploadLogo = multer({
   storage: logoStorage,
@@ -65,7 +83,7 @@ const uploadLogo = multer({
 }).single('logo');
 
 /**
- * Multer upload configuration for avatars
+ * Multer upload configuration for avatars (Cloudinary)
  */
 const uploadAvatar = multer({
   storage: avatarStorage,
@@ -101,17 +119,32 @@ const handleUpload = (uploadFunction) => {
 };
 
 /**
- * Middleware to handle resume upload
+ * Middleware to handle resume upload to memory (for S3/R2)
+ */
+const handleResumeUploadMemory = handleUpload(uploadToMemory('resume').single('resume'));
+
+/**
+ * Middleware to handle logo upload to memory (for S3/R2)
+ */
+const handleLogoUploadMemory = handleUpload(uploadToMemory('logo').single('logo'));
+
+/**
+ * Middleware to handle avatar upload to memory (for S3/R2)
+ */
+const handleAvatarUploadMemory = handleUpload(uploadToMemory('avatar').single('avatar'));
+
+/**
+ * Middleware to handle resume upload (Cloudinary)
  */
 const handleResumeUpload = handleUpload(uploadResume);
 
 /**
- * Middleware to handle logo upload
+ * Middleware to handle logo upload (Cloudinary)
  */
 const handleLogoUpload = handleUpload(uploadLogo);
 
 /**
- * Middleware to handle avatar upload
+ * Middleware to handle avatar upload (Cloudinary)
  */
 const handleAvatarUpload = handleUpload(uploadAvatar);
 
@@ -119,4 +152,7 @@ module.exports = {
   handleResumeUpload,
   handleLogoUpload,
   handleAvatarUpload,
+  handleResumeUploadMemory,
+  handleLogoUploadMemory,
+  handleAvatarUploadMemory,
 };
