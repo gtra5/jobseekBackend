@@ -5,6 +5,7 @@
 
 const { validationResult, body, param, query } = require('express-validator');
 const ApiResponse = require('../utils/apiResponse');
+const { validateEmail, validatePassword, validateName } = require('../utils/validators');
 
 /**
  * Middleware to check validation results
@@ -39,15 +40,28 @@ const commonValidators = {
   password: () => body('password')
     .notEmpty()
     .withMessage('Password is required')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .custom((value) => {
+      const validation = validatePassword(value);
+      if (!validation.isValid) {
+        throw new Error(validation.errors.join(', '));
+      }
+      return true;
+    }),
   
   name: (field) => body(field)
     .trim()
     .notEmpty()
     .withMessage(`${field} is required`)
     .isLength({ min: 2, max: 50 })
-    .withMessage(`${field} must be between 2 and 50 characters`),
+    .withMessage(`${field} must be between 2 and 50 characters`)
+    .custom((value) => {
+      if (!validateName(value)) {
+        throw new Error(`${field} can only contain letters, spaces, hyphens, and apostrophes`);
+      }
+      return true;
+    }),
   
   phone: () => body('phone')
     .optional()
@@ -86,12 +100,47 @@ const authValidators = {
       .withMessage('Email is required')
       .isEmail()
       .withMessage('Please provide a valid email')
-      .normalizeEmail(),
+      .normalizeEmail()
+      .custom((value) => {
+        if (!validateEmail(value)) {
+          throw new Error('Invalid email format');
+        }
+        return true;
+      }),
     body('password')
       .notEmpty()
       .withMessage('Password is required')
-      .isLength({ min: 6 })
-      .withMessage('Password must be at least 6 characters'),
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters')
+      .custom((value) => {
+        const validation = validatePassword(value);
+        if (!validation.isValid) {
+          throw new Error(validation.errors.join(', '));
+        }
+        return true;
+      }),
+    body('firstName')
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 50 })
+      .withMessage('First name must be between 2 and 50 characters')
+      .custom((value) => {
+        if (value && !validateName(value)) {
+          throw new Error('First name can only contain letters, spaces, hyphens, and apostrophes');
+        }
+        return true;
+      }),
+    body('lastName')
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 50 })
+      .withMessage('Last name must be between 2 and 50 characters')
+      .custom((value) => {
+        if (value && !validateName(value)) {
+          throw new Error('Last name can only contain letters, spaces, hyphens, and apostrophes');
+        }
+        return true;
+      }),
     body('role')
       .notEmpty()
       .withMessage('Role is required')
@@ -107,7 +156,13 @@ const authValidators = {
       .withMessage('Email is required')
       .isEmail()
       .withMessage('Please provide a valid email')
-      .normalizeEmail(),
+      .normalizeEmail()
+      .custom((value) => {
+        if (!validateEmail(value)) {
+          throw new Error('Invalid email format');
+        }
+        return true;
+      }),
     body('password')
       .notEmpty()
       .withMessage('Password is required'),
@@ -121,7 +176,13 @@ const authValidators = {
       .withMessage('Email is required')
       .isEmail()
       .withMessage('Please provide a valid email')
-      .normalizeEmail(),
+      .normalizeEmail()
+      .custom((value) => {
+        if (!validateEmail(value)) {
+          throw new Error('Invalid email format');
+        }
+        return true;
+      }),
     validate,
   ],
   
@@ -132,8 +193,15 @@ const authValidators = {
     body('password')
       .notEmpty()
       .withMessage('Password is required')
-      .isLength({ min: 6 })
-      .withMessage('Password must be at least 6 characters'),
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters')
+      .custom((value) => {
+        const validation = validatePassword(value);
+        if (!validation.isValid) {
+          throw new Error(validation.errors.join(', '));
+        }
+        return true;
+      }),
     validate,
   ],
   
