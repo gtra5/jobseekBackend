@@ -5,8 +5,7 @@
 
 const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/apiResponse');
-const Job = require('../models/Job');
-const Application = require('../models/Application');
+const { Job, Application } = require('../models');
 
 /**
  * POST /api/jobs
@@ -61,8 +60,8 @@ const getAllJobs = asyncHandler(async (req, res) => {
     maxSalary,
     experienceLevel,
     remote,
-    page = 1,
-    limit = 10,
+    page,
+    limit,
     sortBy = 'createdAt',
     sortOrder = 'desc',
   } = req.query;
@@ -97,8 +96,8 @@ const getAllJobs = asyncHandler(async (req, res) => {
   // Salary range filter
   if (minSalary || maxSalary) {
     query['salary.min'] = query['salary.min'] || {};
-    if (minSalary) query['salary.min'].$gte = parseInt(minSalary);
-    if (maxSalary) query['salary.max'] = { $lte: parseInt(maxSalary) };
+    if (minSalary) query['salary.min'].$gte = parseInt(minSalary, 10);
+    if (maxSalary) query['salary.max'] = { $lte: parseInt(maxSalary, 10) };
   }
 
   // Experience level filter
@@ -120,12 +119,11 @@ const getAllJobs = asyncHandler(async (req, res) => {
   sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
   // Pagination
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
-  const skip = (pageNum - 1) * limitNum;
+  const pageNum = parseInt(page, 10) || 1;
+  const limitNum = parseInt(limit, 10) || 6;
+  const skip = Math.max(0, (pageNum - 1) * limitNum);
 
   const jobs = await Job.find(query)
-    .populate('employer', 'firstName lastName company.name company.logo')
     .sort(sort)
     .skip(skip)
     .limit(limitNum);
@@ -150,7 +148,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
 const getJobById = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
 
-  const job = await Job.findById(jobId).populate('employer', 'firstName lastName company.name company.logo company.description company.location');
+  const job = await Job.findById(jobId);
 
   if (!job) {
     return ApiResponse.notFound(res, 'Job not found');
@@ -315,8 +313,7 @@ const getSimilarJobs = asyncHandler(async (req, res) => {
       { skills: { $in: job.skills } },
     ],
   })
-    .populate('employer', 'firstName lastName company.name company.logo')
-    .limit(parseInt(limit));
+    .limit(parseInt(limit, 10) || 5);
 
   return ApiResponse.success(res, 200, 'Similar jobs retrieved successfully', {
     jobs: similarJobs,
