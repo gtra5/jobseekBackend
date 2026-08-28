@@ -25,14 +25,21 @@ const purposeValidator = body('purpose')
  */
 router.post('/send', otpRateLimiter, [emailValidator, purposeValidator], async (req, res) => {
   try {
+    console.log('POST /api/otp/send called with body:', { email: req.body.email, purpose: req.body.purpose });
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.log('Validation errors:', errors.array());
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
     const { email, purpose } = req.body;
 
+    console.log('Creating OTP for email:', email, 'purpose:', purpose);
     const otp = await otpService.createOTP(email, purpose);
+    console.log('OTP created:', otp);
+
+    console.log('Sending OTP to email:', email);
     await otpService.sendOTP(email, otp, purpose);
 
     res.status(200).json({

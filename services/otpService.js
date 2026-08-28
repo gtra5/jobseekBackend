@@ -50,6 +50,10 @@ class OTPService {
    */
   async sendOTP(email, otp, purpose) {
     try {
+      console.log('Attempting to send OTP email to:', email);
+      console.log('EMAIL_USER configured:', !!process.env.EMAIL_USER);
+      console.log('EMAIL_PASS configured:', !!process.env.EMAIL_PASS);
+
       const subjects = {
         registration:       'JobSeek – Your Registration Code',
         login:              'JobSeek – Your Login Code',
@@ -79,7 +83,12 @@ class OTPService {
         </div>
       `;
 
-      const info = await this.transporter.sendMail({
+      // Verify transporter before sending
+      console.log('Getting email transporter...');
+      const transporter = this.transporter;
+      console.log('Transporter created successfully');
+
+      const info = await transporter.sendMail({
         from: `"JobSeek" <${process.env.EMAIL_USER}>`,
         to: email,
         subject,
@@ -89,7 +98,18 @@ class OTPService {
       console.log(`OTP email sent to ${email}. MessageId: ${info.messageId}`);
       return true;
     } catch (error) {
-      console.error('Error sending OTP email — full error:', error.message || error);
+      console.error('Error sending OTP email — full error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        command: error.command,
+        response: error.response,
+      });
+      
+      if (error.code === 'EAUTH') {
+        throw new Error('Email authentication failed. Please check EMAIL_USER and EMAIL_PASS in .env. For Gmail, use an App Password instead of your regular password.');
+      }
+      
       throw new Error(error.message || 'Failed to send OTP email. Please try again.');
     }
   }
