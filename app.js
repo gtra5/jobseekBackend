@@ -138,6 +138,39 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Environment config check — shows which critical vars are SET vs MISSING.
+// Never exposes actual values. Remove this route once production is confirmed working.
+app.get('/debug-env', (req, res) => {
+  const vars = [
+    'NODE_ENV',
+    'FRONTEND_URL',
+    'JWT_SECRET',
+    'JWT_REFRESH_SECRET',
+    'EMAIL_USER',
+    'EMAIL_PASS',
+    'MONGODB_URI',
+  ];
+
+  const status = {};
+  for (const v of vars) {
+    const val = process.env[v];
+    if (!val) {
+      status[v] = '❌ MISSING';
+    } else if (
+      val.includes('your_super_secret') ||
+      val.includes('change_this') ||
+      val.includes('<') // placeholder like <username>
+    ) {
+      status[v] = '⚠️  PLACEHOLDER (not a real value)';
+    } else {
+      // Show only first 4 chars so you can confirm it's the right var without exposing it
+      status[v] = `✅ SET (starts with: ${val.substring(0, 4)}...)`;
+    }
+  }
+
+  res.json({ configCheck: status });
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
