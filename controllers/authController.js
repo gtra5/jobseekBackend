@@ -47,8 +47,16 @@ const register = asyncHandler(async (req, res) => {
     ipAddress: req.ip,
   });
 
-  // Send OTP for email verification
-  await otpService.generateAndSendOTP(user._id, user.email, 'email_verification', req.ip);
+  // Send OTP for email verification. This is intentionally non-fatal:
+  // account creation must succeed even if the email provider is down or
+  // misconfigured — otherwise the user is left with an account that was
+  // created (so re-registering 409s) but never got a success response.
+  // The user can request a fresh OTP later via /resend-otp.
+  try {
+    await otpService.generateAndSendOTP(user._id, user.email, 'email_verification', req.ip);
+  } catch (otpError) {
+    console.error('Failed to send verification OTP during registration:', otpError.message);
+  }
 
   // Remove password from response
   user.password = undefined;
@@ -167,7 +175,7 @@ const login = asyncHandler(async (req, res) => {
  */
 const logout = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
-  
+
   if (refreshToken) {
     // Revoke the refresh token from database
     await RefreshToken.findOneAndUpdate(
@@ -187,9 +195,9 @@ const logout = asyncHandler(async (req, res) => {
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
   });
-  
+
   logAuthEvent.logout(req.user?.id, req.ip, req.headers['user-agent']);
-  
+
   return ApiResponse.success(res, 200, 'Logout successful');
 });
 
@@ -209,9 +217,9 @@ const refreshToken = asyncHandler(async (req, res) => {
     const decoded = verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET);
 
     // Check if refresh token exists in database and is not revoked
-    const storedToken = await RefreshToken.findOne({ 
+    const storedToken = await RefreshToken.findOne({
       token: refreshToken,
-      revoked: false 
+      revoked: false
     });
 
     if (!storedToken || !storedToken.isValid()) {

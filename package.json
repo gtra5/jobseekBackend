@@ -35,7 +35,7 @@
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "twilio": "6.0.2",
-    "winston": "^3.11.0",
+    "winston": "^3.19.0",
     "xss": "1.0.15"
   },
   "devDependencies": {
