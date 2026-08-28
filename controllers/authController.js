@@ -71,25 +71,33 @@ const register = asyncHandler(async (req, res) => {
   // Remove password from response
   user.password = undefined;
 
-  // Set access token as httpOnly cookie (short-lived for security)
-  res.cookie("accessToken", accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+// Cookie settings differ by environment:
+// - Production (Render → Vercel): cross-origin, HTTPS only
+//   → secure: true, sameSite: 'none'  (sameSite 'none' REQUIRES secure: true)
+// - Development (localhost): same-origin loopback
+//   → secure: false, sameSite: 'lax'
+const isProduction = process.env.NODE_ENV === 'production';
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+};
+
+  // Set access token as httpOnly cookie (short-lived)
+  res.cookie('accessToken', accessToken, {
+    ...cookieOptions,
     maxAge: 15 * 60 * 1000, // 15 minutes
   });
 
   // Set refresh token as httpOnly cookie (long-lived)
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+  res.cookie('refreshToken', refreshToken, {
+    ...cookieOptions,
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
   return ApiResponse.created(
     res,
-    "User registered successfully. Please verify your email.",
+    'User registered successfully. Please verify your email.',
     {
       accessToken,
       user: {
@@ -156,19 +164,22 @@ const login = asyncHandler(async (req, res) => {
   // Remove password from response
   user.password = undefined;
 
-  // Set access token as httpOnly cookie (short-lived for security)
-  res.cookie("accessToken", accessToken, {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const cookieOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+  };
+
+  // Set access token as httpOnly cookie (short-lived)
+  res.cookie('accessToken', accessToken, {
+    ...cookieOptions,
     maxAge: 15 * 60 * 1000, // 15 minutes
   });
 
   // Set refresh token as httpOnly cookie (long-lived)
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+  res.cookie('refreshToken', refreshToken, {
+    ...cookieOptions,
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
@@ -176,7 +187,7 @@ const login = asyncHandler(async (req, res) => {
     user._id,
     user.email,
     req.ip,
-    req.headers["user-agent"],
+    req.headers['user-agent'],
   );
 
   // Return accessToken in body so frontend can attach it as a Bearer header.
@@ -197,80 +208,97 @@ const login = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/auth/logout
- * Logout user (revoke refresh token)
+ * Logout user — always succeeds (200) regardless of token state.
+ * This route has NO authenticate middleware so a user with an expired
+ * access token can still clear their session properly.
  */
 const logout = asyncHandler(async (req, res) => {
-  const refreshToken = req.cookies.refreshToken;
-
-  if (refreshToken) {
-    // Revoke the refresh token from database
-    await RefreshToken.findOneAndUpdate(
-      { token: refreshToken },
-      { revoked: true, revokedAt: new Date() },
-    );
+  // Try to revoke the refresh token from DB, but never fail if it's missing
+  try {
+    const incomingRefreshToken = req.cookies.refreshToken;
+    if (incomingRefreshToken) {
+      await RefreshToken.findOneAndUpdate(
+        { token: incomingRefreshToken },
+        { revoked: true, revokedAt: new Date() },
+      );
+    }
+  } catch (dbError) {
+    // Non-fatal — the cookies will be cleared below regardless
+    console.error('Logout: could not revoke refresh token in DB:', dbError.message);
   }
 
-  // Clear the httpOnly cookies
-  res.clearCookie("accessToken", {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const clearOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-  });
-  res.clearCookie("refreshToken", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-  });
+    secure: isProduction,
+    // sameSite must match the Set-Cookie options used when the cookie was set,
+    // otherwise browsers silently ignore the clearCookie instruction
+    sameSite: isProduction ? 'none' : 'lax',
+  };
 
-  logAuthEvent.logout(req.user?.id, req.ip, req.headers["user-agent"]);
+  res.clearCookie('accessToken', clearOptions);
+  res.clearCookie('refreshToken', clearOptions);
 
-  return ApiResponse.success(res, 200, "Logout successful");
+  // Log using optional chaining — req.user may be undefined since there's no auth middleware
+  logAuthEvent.logout(req.user?.id, req.ip, req.headers['user-agent']);
+
+  return ApiResponse.success(res, 200, 'Logout successful');
 });
 
 /**
  * POST /api/auth/refresh-token
- * Refresh access token using refresh token from httpOnly cookie
+ * Refresh access token using refresh token from httpOnly cookie.
+ * All error paths return 401 JSON — never a 500.
  */
 const refreshToken = asyncHandler(async (req, res) => {
-  const refreshToken = req.cookies.refreshToken;
+  const incomingRefreshToken = req.cookies.refreshToken;
 
-  if (!refreshToken) {
-    return ApiResponse.unauthorized(res, "Refresh token is required");
+  if (!incomingRefreshToken) {
+    return ApiResponse.unauthorized(res, 'Refresh token is required');
   }
 
+  let decoded;
   try {
-    const { verifyToken } = require("../utils/generateToken");
-    const decoded = verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET);
-
-    // Check if refresh token exists in database and is not revoked
-    const storedToken = await RefreshToken.findOne({
-      token: refreshToken,
-      revoked: false,
-    });
-
-    if (!storedToken || !storedToken.isValid()) {
-      return ApiResponse.unauthorized(res, "Invalid or expired refresh token");
-    }
-
-    const user = await User.findById(decoded.id);
-    if (!user || !user.isActive || user.isDeleted) {
-      return ApiResponse.unauthorized(res, "Invalid refresh token");
-    }
-
-    // Generate new access token
-    const newAccessToken = generateAccessToken({
-      id: user._id,
-      role: user.role,
-    });
-
-    logAuthEvent.tokenRefresh(user._id, req.ip);
-
-    return ApiResponse.success(res, 200, "Token refreshed successfully", {
-      accessToken: newAccessToken,
-    });
-  } catch (error) {
-    return ApiResponse.unauthorized(res, "Invalid or expired refresh token");
+    const { verifyToken } = require('../utils/generateToken');
+    // verifyToken throws JsonWebTokenError / TokenExpiredError on bad input —
+    // catching here converts those into clean 401 responses instead of 500s
+    decoded = verifyToken(incomingRefreshToken, process.env.JWT_REFRESH_SECRET);
+  } catch (jwtError) {
+    return ApiResponse.unauthorized(res, 'Invalid or expired refresh token');
   }
+
+  // Check the token exists in DB and hasn't been revoked
+  const storedToken = await RefreshToken.findOne({
+    token: incomingRefreshToken,
+    revoked: false,
+  });
+
+  if (!storedToken || !storedToken.isValid()) {
+    return ApiResponse.unauthorized(res, 'Invalid or expired refresh token');
+  }
+
+  const user = await User.findById(decoded.id);
+  if (!user || !user.isActive || user.isDeleted) {
+    return ApiResponse.unauthorized(res, 'Invalid refresh token');
+  }
+
+  // Issue a new access token
+  const newAccessToken = generateAccessToken({ id: user._id, role: user.role });
+
+  // Also refresh the access-token cookie so browser-based flows stay in sync
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.cookie('accessToken', newAccessToken, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 15 * 60 * 1000, // 15 minutes
+  });
+
+  logAuthEvent.tokenRefresh(user._id, req.ip);
+
+  return ApiResponse.success(res, 200, 'Token refreshed successfully', {
+    accessToken: newAccessToken,
+  });
 });
 
 /**

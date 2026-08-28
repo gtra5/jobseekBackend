@@ -26,9 +26,12 @@ router.post('/login', authValidators.login, authController.login);
 /**
  * @route   POST /api/auth/logout
  * @desc    Logout user
- * @access  Private
+ * @access  Public — intentionally no `authenticate` middleware so that a
+ *          user with an expired/missing access token can still log out.
+ *          The handler itself reads the refreshToken cookie and revokes it;
+ *          it does not need a valid Bearer header to do that safely.
  */
-router.post('/logout', authenticate, authController.logout);
+router.post('/logout', authController.logout);
 
 /**
  * @route   POST /api/auth/refresh-token

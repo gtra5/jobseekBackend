@@ -29,38 +29,30 @@ app.set('trust proxy', 1);
 app.use(helmet());
 
 // CORS configuration
+// Cross-origin credentials (cookies) require:
+//   - credentials: true on the server
+//   - withCredentials: true on the client
+//   - an explicit origin (not a wildcard) in the response
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, etc.)
+    // Allow requests with no origin (mobile apps, curl, Render health checks)
     if (!origin) return callback(null, true);
 
-    // List of allowed origins
     const allowedOrigins = [
-      process.env.FRONTEND_URL || 'http://localhost:5174',
+      process.env.FRONTEND_URL,          // primary — must be set on Render
       'http://localhost:5173',
       'http://localhost:5174',
       'http://localhost:5175',
-    ];
+    ].filter(Boolean); // remove undefined/null if FRONTEND_URL is not set
 
-    // In production, only allow the configured frontend URL
-    if (process.env.NODE_ENV === 'production') {
-      const productionOrigin = process.env.FRONTEND_URL;
-      if (origin === productionOrigin) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
     } else {
-      // In development, allow all localhost origins
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
+      callback(new Error(`CORS: origin '${origin}' is not allowed`));
     }
   },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  credentials: true,   // required for cross-origin cookie transmission
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 app.use(cors(corsOptions));
