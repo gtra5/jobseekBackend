@@ -290,23 +290,40 @@ const fetchAdzunaJobs = async (params = {}) => {
     const appId = process.env.ADZUNA_APP_ID;
     const appKey = process.env.ADZUNA_APP_KEY;
 
+    // Guard: skip the request entirely if credentials are missing
     if (!appId || !appKey) {
-      console.warn('Adzuna API credentials not configured');
+      console.warn('Adzuna API credentials not configured — skipping Adzuna fetch');
       return [];
     }
 
-    const url = `https://api.adzuna.com/v1/api/jobs/us/search/${page}`;
-    const response = await axios.get(url, {
-      params: {
-        app_id: appId,
-        app_key: appKey,
-        what: keywords,
-        where: location,
-        'content-type': 'application/json',
-        results_per_page: limit,
-        days_old: days, // Adzuna supports days_old parameter
-      },
-    });
+    const url = `https://api.adzuna.com/v1/api/jobs/us/search/${encodeURIComponent(page)}`;
+
+    let response;
+    try {
+      response = await axios.get(url, {
+        params: {
+          app_id: appId,
+          app_key: appKey,
+          what: keywords,
+          where: location,
+          'content-type': 'application/json',
+          results_per_page: limit,
+          days_old: days,
+        },
+        // Force axios to treat non-2xx as errors even if the body is HTML
+        validateStatus: (status) => status >= 200 && status < 300,
+      });
+    } catch (axiosError) {
+      // Adzuna sometimes returns an Nginx HTML error page instead of JSON.
+      // Detect that case and log a clean message instead of propagating the parse error.
+      const contentType = axiosError.response?.headers?.['content-type'] || '';
+      if (contentType.includes('text/html')) {
+        console.warn('Adzuna returned an HTML error page — likely a bad API key or rate limit. Status:', axiosError.response?.status);
+      } else {
+        console.error('Adzuna request failed:', axiosError.message);
+      }
+      return [];
+    }
 
     if (response.data?.results) {
       const jobs = response.data.results.map(job => normalizeJob(job, 'adzuna'));
@@ -314,7 +331,7 @@ const fetchAdzunaJobs = async (params = {}) => {
     }
     return [];
   } catch (error) {
-    console.error('Error fetching Adzuna jobs:', error.message, error.response?.data);
+    console.error('Error processing Adzuna jobs:', error.message);
     return [];
   }
 };

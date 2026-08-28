@@ -15,20 +15,16 @@ class OTPService {
       const pass = (process.env.EMAIL_PASS || '').replace(/\s+/g, '');
 
       if (!user || !pass) {
-        throw new Error(
-          'Email credentials are not configured. Set EMAIL_USER and EMAIL_PASS in .env'
-        );
+        // Return null instead of throwing so callers can handle gracefully
+        return null;
       }
 
       this._transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: { user, pass },
-        // Fail fast instead of hanging for minutes if the host's outbound
-        // SMTP ports are blocked (common on platforms like Render) or the
-        // network path to Gmail is otherwise unreachable.
-        connectionTimeout: 10000, // time to establish the TCP connection
-        greetingTimeout: 10000,   // time to wait for the SMTP greeting
-        socketTimeout: 10000,     // time of inactivity before killing the socket
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
       });
     }
     return this._transporter;
@@ -59,6 +55,22 @@ class OTPService {
       console.log('Attempting to send OTP email to:', email);
       console.log('EMAIL_USER configured:', !!process.env.EMAIL_USER);
       console.log('EMAIL_PASS configured:', !!process.env.EMAIL_PASS);
+
+      // If email credentials aren't set, log a warning and skip sending.
+      // This allows local/staging environments to work without email configured.
+      const transporter = this.transporter;
+      if (!transporter) {
+        console.warn(
+          '[OTP] EMAIL_USER / EMAIL_PASS not configured — skipping email send.' +
+          ' OTP was created in the database but NOT delivered to the user.' +
+          ' Set EMAIL_USER and EMAIL_PASS in your environment variables.'
+        );
+        // In development, print the OTP to the console so it can be used manually
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn(`[OTP DEV] OTP for ${email} (${purpose}): ${otp}`);
+        }
+        return true; // Don't throw — the OTP record was saved, let the flow continue
+      }
 
       const subjects = {
         registration:       'JobSeek – Your Registration Code',
@@ -91,7 +103,6 @@ class OTPService {
 
       // Verify transporter before sending
       console.log('Getting email transporter...');
-      const transporter = this.transporter;
       console.log('Transporter created successfully');
 
       const info = await transporter.sendMail({

@@ -69,18 +69,22 @@ const getAllJobs = asyncHandler(async (req, res) => {
   // Build query
   const query = { isActive: true, isDeleted: false };
 
+  // Escape special regex characters to prevent MongoDB errors on inputs like "c++" or "(developer)"
+  const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   // Keyword search
   if (keywords) {
+    const safeKeywords = escapeRegex(keywords);
     query.$or = [
-      { title: { $regex: keywords, $options: 'i' } },
-      { description: { $regex: keywords, $options: 'i' } },
-      { skills: { $regex: keywords, $options: 'i' } },
+      { title: { $regex: safeKeywords, $options: 'i' } },
+      { description: { $regex: safeKeywords, $options: 'i' } },
+      { skills: { $regex: safeKeywords, $options: 'i' } },
     ];
   }
 
   // Location filter
   if (location) {
-    query.location = { $regex: location, $options: 'i' };
+    query.location = { $regex: escapeRegex(location), $options: 'i' };
   }
 
   // Job type filter
@@ -93,11 +97,13 @@ const getAllJobs = asyncHandler(async (req, res) => {
     query.category = category;
   }
 
-  // Salary range filter
-  if (minSalary || maxSalary) {
-    query['salary.min'] = query['salary.min'] || {};
-    if (minSalary) query['salary.min'].$gte = parseInt(minSalary, 10);
-    if (maxSalary) query['salary.max'] = { $lte: parseInt(maxSalary, 10) };
+  // Salary range filter — build each side independently to avoid an empty
+  // object match on salary.min when only maxSalary is provided
+  if (minSalary) {
+    query['salary.min'] = { $gte: parseInt(minSalary, 10) };
+  }
+  if (maxSalary) {
+    query['salary.max'] = { $lte: parseInt(maxSalary, 10) };
   }
 
   // Experience level filter
@@ -265,8 +271,9 @@ const getEmployerJobs = asyncHandler(async (req, res) => {
     query.isActive = false;
   }
 
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
+  // Safe pagination — parseInt with explicit radix + fallback prevents NaN in skip/limit
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, parseInt(limit, 10) || 10);
   const skip = (pageNum - 1) * limitNum;
 
   const jobs = await Job.find(query)

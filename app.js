@@ -21,6 +21,10 @@ const otpRoutes = require('./routes/otp');
 
 const app = express();
 
+// Trust the first proxy hop (required on Render/Heroku/etc.)
+// Must be set BEFORE express-rate-limit, which reads req.ip
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
