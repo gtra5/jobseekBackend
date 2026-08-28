@@ -57,19 +57,13 @@ class OTPService {
       console.log('EMAIL_PASS configured:', !!process.env.EMAIL_PASS);
 
       // If email credentials aren't set, log a warning and skip sending.
-      // This allows local/staging environments to work without email configured.
       const transporter = this.transporter;
       if (!transporter) {
         console.warn(
-          '[OTP] EMAIL_USER / EMAIL_PASS not configured — skipping email send.' +
-          ' OTP was created in the database but NOT delivered to the user.' +
-          ' Set EMAIL_USER and EMAIL_PASS in your environment variables.'
+          '[OTP] EMAIL_USER / EMAIL_PASS not configured — skipping email send. ' +
+          'Set EMAIL_USER and EMAIL_PASS in your environment variables.'
         );
-        // In development, print the OTP to the console so it can be used manually
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[OTP DEV] OTP for ${email} (${purpose}): ${otp}`);
-        }
-        return true; // Don't throw — the OTP record was saved, let the flow continue
+        return true;
       }
 
       const subjects = {
