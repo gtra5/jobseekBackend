@@ -23,6 +23,12 @@ class OTPService {
       this._transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: { user, pass },
+        // Fail fast instead of hanging for minutes if the host's outbound
+        // SMTP ports are blocked (common on platforms like Render) or the
+        // network path to Gmail is otherwise unreachable.
+        connectionTimeout: 10000, // time to establish the TCP connection
+        greetingTimeout: 10000,   // time to wait for the SMTP greeting
+        socketTimeout: 10000,     // time of inactivity before killing the socket
       });
     }
     return this._transporter;

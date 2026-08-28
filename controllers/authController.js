@@ -3,15 +3,18 @@
  * Handles user registration, login, password reset, and email verification
  */
 
-const asyncHandler = require('../utils/asyncHandler');
-const ApiResponse = require('../utils/apiResponse');
-const { generateAccessToken, generateRefreshToken } = require('../utils/generateToken');
-const { logAuthEvent } = require('../utils/logger');
-const User = require('../models/User');
-const OTP = require('../models/OTP');
-const RefreshToken = require('../models/RefreshToken');
-const otpService = require('../services/otpService');
-const emailService = require('../services/emailService');
+const asyncHandler = require("../utils/asyncHandler");
+const ApiResponse = require("../utils/apiResponse");
+const {
+  generateAccessToken,
+  generateRefreshToken,
+} = require("../utils/generateToken");
+const { logAuthEvent } = require("../utils/logger");
+const User = require("../models/User");
+const OTP = require("../models/OTP");
+const RefreshToken = require("../models/RefreshToken");
+const otpService = require("../services/otpService");
+const emailService = require("../services/emailService");
 
 /**
  * POST /api/auth/register
@@ -23,7 +26,7 @@ const register = asyncHandler(async (req, res) => {
   // Check if user already exists
   const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
-    return ApiResponse.conflict(res, 'User with this email already exists');
+    return ApiResponse.conflict(res, "User with this email already exists");
   }
 
   // Create new user
@@ -43,51 +46,62 @@ const register = asyncHandler(async (req, res) => {
   await RefreshToken.create({
     token: refreshToken,
     userId: user._id,
-    userAgent: req.headers['user-agent'],
+    userAgent: req.headers["user-agent"],
     ipAddress: req.ip,
   });
 
-  // Send OTP for email verification. This is intentionally non-fatal:
-  // account creation must succeed even if the email provider is down or
-  // misconfigured — otherwise the user is left with an account that was
-  // created (so re-registering 409s) but never got a success response.
-  // The user can request a fresh OTP later via /resend-otp.
-  try {
-    await otpService.generateAndSendOTP(user._id, user.email, 'email_verification', req.ip);
-  } catch (otpError) {
-    console.error('Failed to send verification OTP during registration:', otpError.message);
-  }
+  // Send OTP for email verification. This is intentionally non-fatal AND
+  // intentionally NOT awaited: account creation must succeed even if the
+  // email provider is down, misconfigured, or slow to respond — otherwise
+  // the user is left staring at a spinner (or a false "Registration failed"
+  // once the client's own request timeout fires) while an account that
+  // already exists silently sits there (so a retry just 409s). Firing this
+  // without awaiting means the HTTP response below goes out immediately,
+  // regardless of how long email delivery takes. The user can request a
+  // fresh OTP later via /resend-otp if this send fails or is delayed.
+  otpService
+    .generateAndSendOTP(user._id, user.email, "email_verification", req.ip)
+    .catch((otpError) => {
+      console.error(
+        "Failed to send verification OTP during registration:",
+        otpError.message,
+      );
+    });
 
   // Remove password from response
   user.password = undefined;
 
   // Set access token as httpOnly cookie (short-lived for security)
-  res.cookie('accessToken', accessToken, {
+  res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
     maxAge: 15 * 60 * 1000, // 15 minutes
   });
 
   // Set refresh token as httpOnly cookie (long-lived)
-  res.cookie('refreshToken', refreshToken, {
+  res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
-  return ApiResponse.created(res, 'User registered successfully. Please verify your email.', {
-    accessToken,
-    user: {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      isVerified: user.isVerified,
+  return ApiResponse.created(
+    res,
+    "User registered successfully. Please verify your email.",
+    {
+      accessToken,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        isVerified: user.isVerified,
+      },
     },
-  });
+  );
 });
 
 /**
@@ -98,22 +112,29 @@ const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
   // Find user and include password for comparison
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  const user = await User.findOne({ email: email.toLowerCase() }).select(
+    "+password",
+  );
 
   if (!user) {
-    return ApiResponse.unauthorized(res, 'Invalid email or password');
+    return ApiResponse.unauthorized(res, "Invalid email or password");
   }
 
   // Check if user is active
   if (!user.isActive || user.isDeleted) {
-    return ApiResponse.unauthorized(res, 'Account is inactive or deleted');
+    return ApiResponse.unauthorized(res, "Account is inactive or deleted");
   }
 
   // Compare password
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
-    logAuthEvent.loginFailure(email, req.ip, req.headers['user-agent'], 'Invalid password');
-    return ApiResponse.unauthorized(res, 'Invalid email or password');
+    logAuthEvent.loginFailure(
+      email,
+      req.ip,
+      req.headers["user-agent"],
+      "Invalid password",
+    );
+    return ApiResponse.unauthorized(res, "Invalid email or password");
   }
 
   // Update last login
@@ -128,7 +149,7 @@ const login = asyncHandler(async (req, res) => {
   await RefreshToken.create({
     token: refreshToken,
     userId: user._id,
-    userAgent: req.headers['user-agent'],
+    userAgent: req.headers["user-agent"],
     ipAddress: req.ip,
   });
 
@@ -136,26 +157,31 @@ const login = asyncHandler(async (req, res) => {
   user.password = undefined;
 
   // Set access token as httpOnly cookie (short-lived for security)
-  res.cookie('accessToken', accessToken, {
+  res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
     maxAge: 15 * 60 * 1000, // 15 minutes
   });
 
   // Set refresh token as httpOnly cookie (long-lived)
-  res.cookie('refreshToken', refreshToken, {
+  res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
-  logAuthEvent.loginSuccess(user._id, user.email, req.ip, req.headers['user-agent']);
+  logAuthEvent.loginSuccess(
+    user._id,
+    user.email,
+    req.ip,
+    req.headers["user-agent"],
+  );
 
   // Return accessToken in body so frontend can attach it as a Bearer header.
   // It is also set as an httpOnly cookie for added security.
-  return ApiResponse.success(res, 200, 'Login successful', {
+  return ApiResponse.success(res, 200, "Login successful", {
     accessToken,
     user: {
       id: user._id,
@@ -180,25 +206,25 @@ const logout = asyncHandler(async (req, res) => {
     // Revoke the refresh token from database
     await RefreshToken.findOneAndUpdate(
       { token: refreshToken },
-      { revoked: true, revokedAt: new Date() }
+      { revoked: true, revokedAt: new Date() },
     );
   }
 
   // Clear the httpOnly cookies
-  res.clearCookie('accessToken', {
+  res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
   });
-  res.clearCookie('refreshToken', {
+  res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
   });
 
-  logAuthEvent.logout(req.user?.id, req.ip, req.headers['user-agent']);
+  logAuthEvent.logout(req.user?.id, req.ip, req.headers["user-agent"]);
 
-  return ApiResponse.success(res, 200, 'Logout successful');
+  return ApiResponse.success(res, 200, "Logout successful");
 });
 
 /**
@@ -209,38 +235,41 @@ const refreshToken = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
 
   if (!refreshToken) {
-    return ApiResponse.unauthorized(res, 'Refresh token is required');
+    return ApiResponse.unauthorized(res, "Refresh token is required");
   }
 
   try {
-    const { verifyToken } = require('../utils/generateToken');
+    const { verifyToken } = require("../utils/generateToken");
     const decoded = verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET);
 
     // Check if refresh token exists in database and is not revoked
     const storedToken = await RefreshToken.findOne({
       token: refreshToken,
-      revoked: false
+      revoked: false,
     });
 
     if (!storedToken || !storedToken.isValid()) {
-      return ApiResponse.unauthorized(res, 'Invalid or expired refresh token');
+      return ApiResponse.unauthorized(res, "Invalid or expired refresh token");
     }
 
     const user = await User.findById(decoded.id);
     if (!user || !user.isActive || user.isDeleted) {
-      return ApiResponse.unauthorized(res, 'Invalid refresh token');
+      return ApiResponse.unauthorized(res, "Invalid refresh token");
     }
 
     // Generate new access token
-    const newAccessToken = generateAccessToken({ id: user._id, role: user.role });
+    const newAccessToken = generateAccessToken({
+      id: user._id,
+      role: user.role,
+    });
 
     logAuthEvent.tokenRefresh(user._id, req.ip);
 
-    return ApiResponse.success(res, 200, 'Token refreshed successfully', {
+    return ApiResponse.success(res, 200, "Token refreshed successfully", {
       accessToken: newAccessToken,
     });
   } catch (error) {
-    return ApiResponse.unauthorized(res, 'Invalid or expired refresh token');
+    return ApiResponse.unauthorized(res, "Invalid or expired refresh token");
   }
 });
 
@@ -255,15 +284,23 @@ const forgotPassword = asyncHandler(async (req, res) => {
   if (!user) {
     // Don't reveal if user exists for security
     logAuthEvent.passwordResetRequested(email, req.ip);
-    return ApiResponse.success(res, 200, 'If the email exists, a reset code has been sent');
+    return ApiResponse.success(
+      res,
+      200,
+      "If the email exists, a reset code has been sent",
+    );
   }
 
   // Generate and send OTP
-  await otpService.generateAndSendOTP(user._id, user.email, 'password_reset');
+  await otpService.generateAndSendOTP(user._id, user.email, "password_reset");
 
   logAuthEvent.passwordResetRequested(email, req.ip);
 
-  return ApiResponse.success(res, 200, 'If the email exists, a reset code has been sent');
+  return ApiResponse.success(
+    res,
+    200,
+    "If the email exists, a reset code has been sent",
+  );
 });
 
 /**
@@ -275,20 +312,20 @@ const resetPassword = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   // Verify OTP
   try {
-    await otpService.verifyOTP(email, otp, 'password_reset');
+    await otpService.verifyOTP(email, otp, "password_reset");
   } catch (err) {
-    return ApiResponse.badRequest(res, err.message || 'Invalid or expired OTP');
+    return ApiResponse.badRequest(res, err.message || "Invalid or expired OTP");
   }
 
   // Revoke all refresh tokens for this user (security best practice on password change)
   await RefreshToken.updateMany(
     { userId: user._id, revoked: false },
-    { revoked: true, revokedAt: new Date() }
+    { revoked: true, revokedAt: new Date() },
   );
 
   // Update password
@@ -296,11 +333,11 @@ const resetPassword = asyncHandler(async (req, res) => {
   await user.save();
 
   // Delete used OTP
-  await OTP.deleteMany({ userId: user._id, type: 'password_reset' });
+  await OTP.deleteMany({ userId: user._id, type: "password_reset" });
 
   logAuthEvent.passwordResetSuccess(user._id, user.email, req.ip);
 
-  return ApiResponse.success(res, 200, 'Password reset successful');
+  return ApiResponse.success(res, 200, "Password reset successful");
 });
 
 /**
@@ -312,14 +349,14 @@ const verifyEmail = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   // Verify OTP
   try {
-    await otpService.verifyOTP(email, otp, 'email_verification');
+    await otpService.verifyOTP(email, otp, "email_verification");
   } catch (err) {
-    return ApiResponse.badRequest(res, err.message || 'Invalid or expired OTP');
+    return ApiResponse.badRequest(res, err.message || "Invalid or expired OTP");
   }
 
   // Mark user as verified
@@ -328,9 +365,9 @@ const verifyEmail = asyncHandler(async (req, res) => {
   await user.save();
 
   // Delete used OTP
-  await OTP.deleteMany({ userId: user._id, type: 'email_verification' });
+  await OTP.deleteMany({ userId: user._id, type: "email_verification" });
 
-  return ApiResponse.success(res, 200, 'Email verified successfully');
+  return ApiResponse.success(res, 200, "Email verified successfully");
 });
 
 /**
@@ -340,20 +377,20 @@ const verifyEmail = asyncHandler(async (req, res) => {
 const resendOTP = asyncHandler(async (req, res) => {
   const { email, type } = req.body;
 
-  const validTypes = ['email_verification', 'password_reset'];
+  const validTypes = ["email_verification", "password_reset"];
   if (!validTypes.includes(type)) {
-    return ApiResponse.badRequest(res, 'Invalid OTP type');
+    return ApiResponse.badRequest(res, "Invalid OTP type");
   }
 
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   // Generate and send new OTP
   await otpService.generateAndSendOTP(user._id, user.email, type);
 
-  return ApiResponse.success(res, 200, 'OTP sent successfully');
+  return ApiResponse.success(res, 200, "OTP sent successfully");
 });
 
 /**
@@ -361,13 +398,13 @@ const resendOTP = asyncHandler(async (req, res) => {
  * Get current user profile
  */
 const getMe = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.userId).select('-password');
+  const user = await User.findById(req.userId).select("-password");
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  return ApiResponse.success(res, 200, 'User profile retrieved', {
+  return ApiResponse.success(res, 200, "User profile retrieved", {
     user: {
       id: user._id,
       email: user.email,
