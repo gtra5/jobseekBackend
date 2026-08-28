@@ -93,59 +93,60 @@ const commonValidators = {
  * Auth validation rules
  */
 const authValidators = {
-  register: [
+  // Step 1 — validates the signup form fields before any DB write
+  preRegister: [
     body('email')
       .trim()
-      .notEmpty()
-      .withMessage('Email is required')
-      .isEmail()
-      .withMessage('Please provide a valid email')
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Please provide a valid email')
       .normalizeEmail()
       .custom((value) => {
-        if (!validateEmail(value)) {
-          throw new Error('Invalid email format');
-        }
+        if (!validateEmail(value)) throw new Error('Invalid email format');
         return true;
       }),
     body('password')
-      .notEmpty()
-      .withMessage('Password is required')
-      .isLength({ min: 8 })
-      .withMessage('Password must be at least 8 characters')
+      .notEmpty().withMessage('Password is required')
+      .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
       .custom((value) => {
         const validation = validatePassword(value);
-        if (!validation.isValid) {
-          throw new Error(validation.errors.join(', '));
-        }
+        if (!validation.isValid) throw new Error(validation.errors.join(', '));
         return true;
       }),
     body('firstName')
       .optional()
       .trim()
-      .isLength({ min: 2, max: 50 })
-      .withMessage('First name must be between 2 and 50 characters')
+      .isLength({ min: 2, max: 50 }).withMessage('First name must be between 2 and 50 characters')
       .custom((value) => {
-        if (value && !validateName(value)) {
+        if (value && !validateName(value))
           throw new Error('First name can only contain letters, spaces, hyphens, and apostrophes');
-        }
         return true;
       }),
     body('lastName')
       .optional()
       .trim()
-      .isLength({ min: 2, max: 50 })
-      .withMessage('Last name must be between 2 and 50 characters')
+      .isLength({ min: 2, max: 50 }).withMessage('Last name must be between 2 and 50 characters')
       .custom((value) => {
-        if (value && !validateName(value)) {
+        if (value && !validateName(value))
           throw new Error('Last name can only contain letters, spaces, hyphens, and apostrophes');
-        }
         return true;
       }),
     body('role')
-      .notEmpty()
-      .withMessage('Role is required')
-      .isIn(['jobseeker', 'employer'])
-      .withMessage('Role must be either jobseeker or employer'),
+      .notEmpty().withMessage('Role is required')
+      .isIn(['jobseeker', 'employer']).withMessage('Role must be either jobseeker or employer'),
+    validate,
+  ],
+
+  // Step 2 — verifies OTP and completes account creation
+  register: [
+    body('email')
+      .trim()
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Please provide a valid email')
+      .normalizeEmail(),
+    body('otp')
+      .notEmpty().withMessage('OTP is required')
+      .isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits')
+      .isNumeric().withMessage('OTP must contain only numbers'),
     validate,
   ],
   

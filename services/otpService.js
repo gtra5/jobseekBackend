@@ -135,16 +135,18 @@ class OTPService {
    * Create and store OTP in database
    * @param {string} email   - Recipient email address
    * @param {string} purpose - Purpose of OTP
-   * @returns {Promise<string>} Generated OTP
+   * @param {Object} [pendingData] - Optional payload to store alongside the OTP
+   *                                 (used for registration to hold pre-verified user data)
+   * @returns {Promise<string>} The plain-text OTP (before hashing)
    */
-  async createOTP(email, purpose) {
+  async createOTP(email, purpose, pendingData = null) {
     try {
       const otp = this.generateOTP();
 
       // Remove any existing unverified OTPs for this email + purpose
       await OTP.deleteMany({ email, purpose, isVerified: false });
 
-      const otpRecord = new OTP({ email, otp, purpose });
+      const otpRecord = new OTP({ email, otp, purpose, pendingData });
       await otpRecord.save();
 
       return otp;
@@ -159,7 +161,7 @@ class OTPService {
    * @param {string} email   - Email address
    * @param {string} otp     - OTP to verify
    * @param {string} purpose - Purpose of OTP
-   * @returns {Promise<boolean>}
+   * @returns {Promise<OTPDocument>} The verified OTP document (contains pendingData if present)
    */
   async verifyOTP(email, otp, purpose) {
     try {
@@ -195,7 +197,8 @@ class OTPService {
 
       logAuthEvent.otpVerified(email, purpose, 'Unknown');
 
-      return true;
+      // Return the full record so callers can access pendingData
+      return otpRecord;
     } catch (error) {
       console.error('Error verifying OTP:', error);
       throw error;
@@ -203,20 +206,21 @@ class OTPService {
   }
 
   /**
-   * Generate and send OTP (wrapper method used by authController)
-   * @param {string} userId - User ID (for reference, not stored in OTP model)
-   * @param {string} email - Recipient email address
-   * @param {string} purpose - Purpose of OTP
-   * @param {string} ip - IP address of the request
-   * @returns {Promise<string>}
+   * Generate and send OTP
+   * @param {string} userId      - User ID (may be null for pre-registration)
+   * @param {string} email       - Recipient email address
+   * @param {string} purpose     - OTP purpose
+   * @param {string} [ip]        - Request IP address
+   * @param {Object} [pendingData] - Optional data to store in the OTP record
+   * @returns {Promise<string>} The plain-text OTP
    */
-  async generateAndSendOTP(userId, email, purpose, ip) {
+  async generateAndSendOTP(userId, email, purpose, ip, pendingData = null) {
     try {
-      const otp = await this.createOTP(email, purpose);
+      const otp = await this.createOTP(email, purpose, pendingData);
       await this.sendOTP(email, otp, purpose);
-      
+
       logAuthEvent.otpRequested(email, purpose, ip);
-      
+
       return otp;
     } catch (error) {
       console.error('Error generating and sending OTP:', error);

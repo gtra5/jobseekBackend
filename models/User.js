@@ -171,10 +171,13 @@ userSchema.index({ role: 1 });
 userSchema.index({ isVerified: 1 });
 
 /**
- * Hash password before saving
+ * Hash password before saving.
+ * Skipped when $locals.skipPasswordHash is true — used by the register
+ * controller which stores a pre-hashed password from pendingData.
  */
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) return;
+  if (this.$locals?.skipPasswordHash) return;   // already hashed — don't double-hash
 
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);

@@ -10,8 +10,15 @@ const { authenticate } = require('../middleware/authMiddleware');
 const { authValidators } = require('../middleware/validateRequest');
 
 /**
+ * @route   POST /api/auth/pre-register
+ * @desc    Step 1: Validate signup inputs, send OTP — no User created yet
+ * @access  Public
+ */
+router.post('/pre-register', authValidators.preRegister, authController.preRegister);
+
+/**
  * @route   POST /api/auth/register
- * @desc    Register a new user
+ * @desc    Step 2: Verify OTP, then create User in DB and issue tokens
  * @access  Public
  */
 router.post('/register', authValidators.register, authController.register);
@@ -25,17 +32,14 @@ router.post('/login', authValidators.login, authController.login);
 
 /**
  * @route   POST /api/auth/logout
- * @desc    Logout user
- * @access  Public — intentionally no `authenticate` middleware so that a
- *          user with an expired/missing access token can still log out.
- *          The handler itself reads the refreshToken cookie and revokes it;
- *          it does not need a valid Bearer header to do that safely.
+ * @desc    Logout user — public so expired tokens never block teardown
+ * @access  Public
  */
 router.post('/logout', authController.logout);
 
 /**
  * @route   POST /api/auth/refresh-token
- * @desc    Refresh access token
+ * @desc    Refresh access token using httpOnly cookie
  * @access  Public
  */
 router.post('/refresh-token', authController.refreshToken);
@@ -56,14 +60,14 @@ router.post('/reset-password', authValidators.resetPassword, authController.rese
 
 /**
  * @route   POST /api/auth/verify-email
- * @desc    Verify email using OTP
+ * @desc    Verify email using OTP (for already-registered users)
  * @access  Public
  */
 router.post('/verify-email', authValidators.verifyOTP, authController.verifyEmail);
 
 /**
  * @route   POST /api/auth/resend-otp
- * @desc    Resend OTP
+ * @desc    Resend OTP (registration or password reset)
  * @access  Public
  */
 router.post('/resend-otp', authController.resendOTP);

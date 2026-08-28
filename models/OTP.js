@@ -47,6 +47,13 @@ const otpSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Stores the pending registration payload for the email-first signup flow.
+  // The User document is NOT created until the OTP is successfully verified.
+  // This field is only populated for purpose === 'registration'.
+  pendingData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
 });
 
 // Indexes for efficient lookups and auto-delete of expired docs

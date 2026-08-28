@@ -17,99 +17,139 @@ const otpService = require("../services/otpService");
 const emailService = require("../services/emailService");
 
 /**
- * POST /api/auth/register
- * Register a new user
+ * POST /api/auth/pre-register
+ * Step 1 of registration: validate inputs, check email availability,
+ * hash the password, store everything as pendingData inside an OTP record,
+ * and send the verification code.
+ *
+ * No User document is created here — the DB stays clean until the OTP
+ * is actually verified in POST /api/auth/register (step 2).
  */
-const register = asyncHandler(async (req, res) => {
+const preRegister = asyncHandler(async (req, res) => {
   const { email, password, role, firstName, lastName } = req.body;
 
-  // Check if user already exists
-  const existingUser = await User.findOne({ email: email.toLowerCase() });
+  const normalizedEmail = email.toLowerCase();
+
+  // Reject immediately if the email is already taken by a verified account
+  const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
-    return ApiResponse.conflict(res, "User with this email already exists");
+    return ApiResponse.conflict(res, 'User with this email already exists');
   }
 
-  // Create new user
-  const user = await User.create({
-    email: email.toLowerCase(),
-    password,
+  // Hash the password now so we never store a plain-text password anywhere,
+  // even temporarily in the OTP record.
+  const bcrypt = require('bcryptjs');
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
+
+  // Package up everything needed to create the User after OTP verification
+  const pendingData = {
+    email: normalizedEmail,
+    password: hashedPassword,  // already hashed — safe to store
     role,
     firstName,
     lastName,
+  };
+
+  // Fire-and-forget: OTP record is written synchronously inside createOTP,
+  // email delivery is the only externally-failable part.
+  otpService
+    .generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, pendingData)
+    .catch((err) => {
+      console.error('[pre-register] Failed to send OTP email:', err.message);
+    });
+
+  return ApiResponse.success(res, 200, 'Verification code sent. Please check your email.', {
+    email: normalizedEmail,
+  });
+});
+
+/**
+ * POST /api/auth/register
+ * Step 2 of registration: verify the OTP, then create the User document
+ * using the pendingData stored in the OTP record. Issues auth tokens on success.
+ */
+const register = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+
+  const normalizedEmail = email.toLowerCase();
+
+  // Double-check the email isn't taken (race-condition guard)
+  const existingUser = await User.findOne({ email: normalizedEmail });
+  if (existingUser) {
+    return ApiResponse.conflict(res, 'User with this email already exists');
+  }
+
+  // Verify the OTP — throws with a user-friendly message on failure
+  let otpRecord;
+  try {
+    otpRecord = await otpService.verifyOTP(normalizedEmail, otp, 'registration');
+  } catch (err) {
+    return ApiResponse.badRequest(res, err.message || 'Invalid or expired OTP');
+  }
+
+  // Retrieve the registration data that was stored at pre-register time
+  const pending = otpRecord.pendingData;
+  if (!pending) {
+    return ApiResponse.badRequest(res, 'Registration data not found. Please start registration again.');
+  }
+
+  // Create the User — password is already hashed, skip the pre-save hook
+  // by using insertOne / create with the hashed value directly.
+  // We bypass Mongoose's pre-save hook to avoid double-hashing.
+  const UserModel = User;
+  const user = new UserModel({
+    email: pending.email,
+    password: pending.password,   // already bcrypt-hashed
+    role: pending.role,
+    firstName: pending.firstName,
+    lastName: pending.lastName,
+    isVerified: true,             // OTP was just verified — mark immediately
+    isEmailVerified: true,
   });
 
-  // Generate tokens
+  // Skip the password pre-save hook since the password is already hashed
+  user.$locals = user.$locals || {};
+  user.$locals.skipPasswordHash = true;
+  await user.save();
+
+  // Clean up the OTP record
+  await OTP.deleteOne({ _id: otpRecord._id });
+
+  // Issue tokens
   const accessToken = generateAccessToken({ id: user._id, role: user.role });
   const refreshToken = generateRefreshToken({ id: user._id });
 
-  // Store refresh token in database
   await RefreshToken.create({
     token: refreshToken,
     userId: user._id,
-    userAgent: req.headers["user-agent"],
+    userAgent: req.headers['user-agent'],
     ipAddress: req.ip,
   });
 
-  // Send OTP for email verification. This is intentionally non-fatal AND
-  // intentionally NOT awaited: account creation must succeed even if the
-  // email provider is down, misconfigured, or slow to respond — otherwise
-  // the user is left staring at a spinner (or a false "Registration failed"
-  // once the client's own request timeout fires) while an account that
-  // already exists silently sits there (so a retry just 409s). Firing this
-  // without awaiting means the HTTP response below goes out immediately,
-  // regardless of how long email delivery takes. The user can request a
-  // fresh OTP later via /resend-otp if this send fails or is delayed.
-  otpService
-    .generateAndSendOTP(user._id, user.email, "email_verification", req.ip)
-    .catch((otpError) => {
-      console.error(
-        "Failed to send verification OTP during registration:",
-        otpError.message,
-      );
-    });
-
-  // Remove password from response
   user.password = undefined;
 
-// Cookie settings differ by environment:
-// - Production (Render → Vercel): cross-origin, HTTPS only
-//   → secure: true, sameSite: 'none'  (sameSite 'none' REQUIRES secure: true)
-// - Development (localhost): same-origin loopback
-//   → secure: false, sameSite: 'lax'
-const isProduction = process.env.NODE_ENV === 'production';
-const cookieOptions = {
-  httpOnly: true,
-  secure: isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-};
+  const isProduction = process.env.NODE_ENV === 'production';
+  const cookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+  };
 
-  // Set access token as httpOnly cookie (short-lived)
-  res.cookie('accessToken', accessToken, {
-    ...cookieOptions,
-    maxAge: 15 * 60 * 1000, // 15 minutes
-  });
+  res.cookie('accessToken', accessToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 });
+  res.cookie('refreshToken', refreshToken, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 * 1000 });
 
-  // Set refresh token as httpOnly cookie (long-lived)
-  res.cookie('refreshToken', refreshToken, {
-    ...cookieOptions,
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-  });
-
-  return ApiResponse.created(
-    res,
-    'User registered successfully. Please verify your email.',
-    {
-      accessToken,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        isVerified: user.isVerified,
-      },
+  return ApiResponse.created(res, 'Account created successfully.', {
+    accessToken,
+    user: {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isVerified: user.isVerified,
     },
-  );
+  });
 });
 
 /**
@@ -403,19 +443,13 @@ const verifyEmail = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/auth/resend-otp
- * Resend OTP for email verification or password reset.
- *
- * Email delivery is intentionally fire-and-forget (same as /register):
- * the OTP record is always created in the DB and the endpoint always
- * returns 200. If the email provider fails on Render (bad credentials,
- * SMTP timeout, etc.) the user can still verify manually via support —
- * and critically, a misconfigured email transport never causes a 500 here.
+ * Resend OTP for registration, email verification, or password reset.
+ * Fire-and-forget email — always returns 200 regardless of email delivery.
  */
 const resendOTP = asyncHandler(async (req, res) => {
   const { email, type } = req.body;
 
-  // Validate the OTP type up front — return 400 for invalid values
-  const validTypes = ['email_verification', 'password_reset'];
+  const validTypes = ['registration', 'email_verification', 'password_reset'];
   if (!type || !validTypes.includes(type)) {
     return ApiResponse.badRequest(
       res,
@@ -427,23 +461,42 @@ const resendOTP = asyncHandler(async (req, res) => {
     return ApiResponse.badRequest(res, 'Email is required');
   }
 
-  // Look up the user — return 404 if not found
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const normalizedEmail = email.toLowerCase();
+
+  if (type === 'registration') {
+    // For pending registrations, no User doc exists yet.
+    // Find the existing OTP record to get the pendingData, then issue a new OTP.
+    const existingOTP = await OTP.findOne({
+      email: normalizedEmail,
+      purpose: 'registration',
+      isVerified: false,
+    }).sort({ createdAt: -1 });
+
+    if (!existingOTP || !existingOTP.pendingData) {
+      // No pending registration found — return generic 200 to avoid enumeration
+      return ApiResponse.success(res, 200, 'If a pending registration exists, a new code has been sent');
+    }
+
+    // Re-use the pendingData from the existing OTP record
+    otpService
+      .generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, existingOTP.pendingData)
+      .catch((err) => {
+        console.error(`[resend-otp/registration] Failed for ${normalizedEmail}:`, err.message);
+      });
+
+    return ApiResponse.success(res, 200, 'New verification code sent');
+  }
+
+  // For email_verification and password_reset — user must already exist
+  const user = await User.findOne({ email: normalizedEmail });
   if (!user) {
-    // Don't reveal whether the account exists for security
-    // But we still return 200 so attackers can't enumerate emails
     return ApiResponse.success(res, 200, 'If the account exists, a new code has been sent');
   }
 
-  // Fire-and-forget — the OTP record is written to the DB synchronously
-  // inside generateAndSendOTP → createOTP, so it's always available to verify.
-  // The email send is the only part that can fail externally; we never want
-  // that to surface as a 500 to the user.
   otpService
     .generateAndSendOTP(user._id, user.email, type, req.ip)
     .catch((err) => {
-      // Log for Render dashboard visibility but do NOT propagate
-      console.error(`[resend-otp] Failed to send OTP email to ${user.email}:`, err.message);
+      console.error(`[resend-otp/${type}] Failed for ${user.email}:`, err.message);
     });
 
   return ApiResponse.success(res, 200, 'OTP sent successfully');
@@ -479,6 +532,7 @@ const getMe = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  preRegister,
   register,
   login,
   logout,
