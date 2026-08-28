@@ -51,13 +51,22 @@ const preRegister = asyncHandler(async (req, res) => {
     lastName,
   };
 
-  // Fire-and-forget: OTP record is written synchronously inside createOTP,
-  // email delivery is the only externally-failable part.
-  otpService
-    .generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, pendingData)
-    .catch((err) => {
-      console.error('[pre-register] Failed to send OTP email:', err.message);
-    });
+  // Unlike the completed-registration flow (where the account already
+  // exists and the email is a bonus), this send IS awaited: no account
+  // exists yet, so the OTP email is the entire deliverable of this
+  // request. If it fails, the frontend needs a real error to show the
+  // user instead of a false "check your email" for a code that never
+  // arrives. The 10s connection/greeting/socket timeouts configured on
+  // the transporter in otpService keep this from hanging indefinitely.
+  try {
+    await otpService.generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, pendingData);
+  } catch (err) {
+    console.error('[pre-register] Failed to send OTP email:', err.message);
+    return ApiResponse.badRequest(
+      res,
+      err.message || 'Failed to send verification code. Please try again.'
+    );
+  }
 
   return ApiResponse.success(res, 200, 'Verification code sent. Please check your email.', {
     email: normalizedEmail,
@@ -477,12 +486,19 @@ const resendOTP = asyncHandler(async (req, res) => {
       return ApiResponse.success(res, 200, 'If a pending registration exists, a new code has been sent');
     }
 
-    // Re-use the pendingData from the existing OTP record
-    otpService
-      .generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, existingOTP.pendingData)
-      .catch((err) => {
-        console.error(`[resend-otp/registration] Failed for ${normalizedEmail}:`, err.message);
-      });
+    // Re-use the pendingData from the existing OTP record. Awaited for the
+    // same reason as preRegister: this email IS the deliverable, and the
+    // pending-registration existence check above already means there's no
+    // enumeration concern left to protect by staying fire-and-forget here.
+    try {
+      await otpService.generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, existingOTP.pendingData);
+    } catch (err) {
+      console.error(`[resend-otp/registration] Failed for ${normalizedEmail}:`, err.message);
+      return ApiResponse.badRequest(
+        res,
+        err.message || 'Failed to resend verification code. Please try again.'
+      );
+    }
 
     return ApiResponse.success(res, 200, 'New verification code sent');
   }

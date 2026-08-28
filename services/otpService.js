@@ -52,14 +52,22 @@ class OTPService {
    */
   async sendOTP(email, otp, purpose) {
     try {
-      // If email credentials aren't set, warn and skip — OTP is still in DB
+      // If email credentials aren't set, this is a real failure — not a
+      // soft no-op. Silently returning true here would tell callers (and
+      // ultimately the user) that an OTP was sent when nothing happened,
+      // which is exactly the kind of silent failure that's impossible to
+      // debug from the frontend. Throw so it surfaces properly.
       const transporter = this.transporter;
       if (!transporter) {
-        console.warn(
-          '[OTP] EMAIL_USER / EMAIL_PASS not configured — OTP not delivered. ' +
-          'Set EMAIL_USER and EMAIL_PASS in your environment variables.'
+        console.error(
+          '[OTP] EMAIL_USER / EMAIL_PASS not configured — cannot deliver OTP. ' +
+          'Set EMAIL_USER and EMAIL_PASS in your environment (remember: on ' +
+          'Render this must be set in the dashboard — a local .env file is not deployed).'
         );
-        return true;
+        throw new Error(
+          'Email is not configured on the server, so the code could not be sent. ' +
+          'Please try again later or contact support.'
+        );
       }
 
       const subjects = {
