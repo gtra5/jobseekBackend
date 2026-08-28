@@ -52,15 +52,11 @@ class OTPService {
    */
   async sendOTP(email, otp, purpose) {
     try {
-      console.log('Attempting to send OTP email to:', email);
-      console.log('EMAIL_USER configured:', !!process.env.EMAIL_USER);
-      console.log('EMAIL_PASS configured:', !!process.env.EMAIL_PASS);
-
-      // If email credentials aren't set, log a warning and skip sending.
+      // If email credentials aren't set, warn and skip — OTP is still in DB
       const transporter = this.transporter;
       if (!transporter) {
         console.warn(
-          '[OTP] EMAIL_USER / EMAIL_PASS not configured — skipping email send. ' +
+          '[OTP] EMAIL_USER / EMAIL_PASS not configured — OTP not delivered. ' +
           'Set EMAIL_USER and EMAIL_PASS in your environment variables.'
         );
         return true;
@@ -80,7 +76,7 @@ class OTPService {
                     background:#0f0f1a;color:#fff;border-radius:12px;">
           <h2 style="color:#6857F6;margin-bottom:8px;">JobSeek</h2>
           <p style="color:#ccc;margin-bottom:24px;">
-            Use the code below to complete your ${purpose.replace('_', ' ')}.
+            Use the code below to complete your ${purpose.replace(/_/g, ' ')}.
             It expires in <strong>10 minutes</strong>.
           </p>
           <div style="background:#1a1a2e;border:1px solid #6857F6;border-radius:8px;
@@ -95,32 +91,31 @@ class OTPService {
         </div>
       `;
 
-      // Verify transporter before sending
-      console.log('Getting email transporter...');
-      console.log('Transporter created successfully');
-
       const info = await transporter.sendMail({
         from: `"JobSeek" <${process.env.EMAIL_USER}>`,
-        to: email,
+        to: email,           // ← always the user's own email, never hardcoded
         subject,
         html,
       });
 
-      console.log(`OTP email sent to ${email}. MessageId: ${info.messageId}`);
+      console.log(`[OTP] Email sent to ${email} (${purpose}). MessageId: ${info.messageId}`);
       return true;
     } catch (error) {
-      console.error('Error sending OTP email — full error:', error);
-      console.error('Error details:', {
-        message: error.message,
+      console.error('[OTP] Failed to send email:', {
+        to: email,
+        purpose,
         code: error.code,
-        command: error.command,
-        response: error.response,
+        message: error.message,
+        smtpResponse: error.response,
       });
-      
+
       if (error.code === 'EAUTH') {
-        throw new Error('Email authentication failed. Please check EMAIL_USER and EMAIL_PASS in .env. For Gmail, use an App Password instead of your regular password.');
+        throw new Error(
+          'Email authentication failed. Check EMAIL_USER and EMAIL_PASS — ' +
+          'for Gmail use an App Password, not your regular password.'
+        );
       }
-      
+
       throw new Error(error.message || 'Failed to send OTP email. Please try again.');
     }
   }
