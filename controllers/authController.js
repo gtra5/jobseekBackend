@@ -303,32 +303,35 @@ const refreshToken = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/auth/forgot-password
- * Send password reset OTP
+ * Send password reset OTP — fire-and-forget email, always returns 200
  */
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
 
+  // Always return the same message whether the user exists or not,
+  // so attackers can't use this endpoint to enumerate accounts
+  const genericResponse = ApiResponse.success(
+    res,
+    200,
+    'If the email exists, a reset code has been sent',
+  );
+
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) {
-    // Don't reveal if user exists for security
     logAuthEvent.passwordResetRequested(email, req.ip);
-    return ApiResponse.success(
-      res,
-      200,
-      "If the email exists, a reset code has been sent",
-    );
+    return genericResponse;
   }
 
-  // Generate and send OTP
-  await otpService.generateAndSendOTP(user._id, user.email, "password_reset");
+  // Fire-and-forget — same pattern as register and resend-otp
+  otpService
+    .generateAndSendOTP(user._id, user.email, 'password_reset', req.ip)
+    .catch((err) => {
+      console.error(`[forgot-password] Failed to send reset OTP to ${user.email}:`, err.message);
+    });
 
   logAuthEvent.passwordResetRequested(email, req.ip);
 
-  return ApiResponse.success(
-    res,
-    200,
-    "If the email exists, a reset code has been sent",
-  );
+  return genericResponse;
 });
 
 /**
@@ -400,25 +403,50 @@ const verifyEmail = asyncHandler(async (req, res) => {
 
 /**
  * POST /api/auth/resend-otp
- * Resend OTP for email verification or password reset
+ * Resend OTP for email verification or password reset.
+ *
+ * Email delivery is intentionally fire-and-forget (same as /register):
+ * the OTP record is always created in the DB and the endpoint always
+ * returns 200. If the email provider fails on Render (bad credentials,
+ * SMTP timeout, etc.) the user can still verify manually via support —
+ * and critically, a misconfigured email transport never causes a 500 here.
  */
 const resendOTP = asyncHandler(async (req, res) => {
   const { email, type } = req.body;
 
-  const validTypes = ["email_verification", "password_reset"];
-  if (!validTypes.includes(type)) {
-    return ApiResponse.badRequest(res, "Invalid OTP type");
+  // Validate the OTP type up front — return 400 for invalid values
+  const validTypes = ['email_verification', 'password_reset'];
+  if (!type || !validTypes.includes(type)) {
+    return ApiResponse.badRequest(
+      res,
+      `Invalid OTP type. Must be one of: ${validTypes.join(', ')}`,
+    );
   }
 
+  if (!email) {
+    return ApiResponse.badRequest(res, 'Email is required');
+  }
+
+  // Look up the user — return 404 if not found
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) {
-    return ApiResponse.notFound(res, "User not found");
+    // Don't reveal whether the account exists for security
+    // But we still return 200 so attackers can't enumerate emails
+    return ApiResponse.success(res, 200, 'If the account exists, a new code has been sent');
   }
 
-  // Generate and send new OTP
-  await otpService.generateAndSendOTP(user._id, user.email, type);
+  // Fire-and-forget — the OTP record is written to the DB synchronously
+  // inside generateAndSendOTP → createOTP, so it's always available to verify.
+  // The email send is the only part that can fail externally; we never want
+  // that to surface as a 500 to the user.
+  otpService
+    .generateAndSendOTP(user._id, user.email, type, req.ip)
+    .catch((err) => {
+      // Log for Render dashboard visibility but do NOT propagate
+      console.error(`[resend-otp] Failed to send OTP email to ${user.email}:`, err.message);
+    });
 
-  return ApiResponse.success(res, 200, "OTP sent successfully");
+  return ApiResponse.success(res, 200, 'OTP sent successfully');
 });
 
 /**

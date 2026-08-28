@@ -116,9 +116,12 @@ const errorHandler = (err, req, res, next) => {
     error = { ...error, ...jwtExpiredError };
   }
 
-  // In production, hide detailed error messages
-  if (process.env.NODE_ENV === 'production') {
-    error.message = 'An error occurred. Please try again later.';
+  // In production, hide internal/stack details from the client response,
+  // but preserve the original message for operational errors (4xx) since
+  // those are expected and user-facing (e.g. "Invalid OTP", "User not found").
+  // Only blank 5xx messages — those may contain internal implementation details.
+  if (process.env.NODE_ENV === 'production' && error.statusCode >= 500) {
+    error.message = 'An unexpected error occurred. Please try again later.';
   }
 
   // Send error response (no stack traces in client response)
