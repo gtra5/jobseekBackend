@@ -10,6 +10,27 @@
 
 const axios = require('axios');
 const xss = require('xss');
+const cache = require('../utils/cache');
+const PROFESSIONS = require('../constants/professions');
+
+/**
+ * Build a stable cache key for external job fetches.
+ * Only the parameters that actually affect the upstream requests are
+ * included — page/limit/jobType/minSalary/maxSalary are applied AFTER the
+ * fetch (pagination + filtering), so they must not bust the cache.
+ * @param {Object} params - Search parameters
+ * @param {Array<string>|null} sources - Sources being fetched
+ * @returns {string} Stable cache key
+ */
+const getCacheKey = (params = {}, sources = null) =>
+  JSON.stringify({
+    keywords: params.keywords || '',
+    location: params.location || '',
+    category: params.category || '',
+    remote: !!params.remote,
+    days: params.days ? parseInt(params.days, 10) || 30 : 30,
+    sources: sources ? [...sources].sort() : null,
+  });
 
 /**
  * Check if a job posting is recent (within specified days)
@@ -61,7 +82,7 @@ const sanitizeString = (str) => {
 const sanitizeJob = (job) => {
   const sanitized = { ...job };
   
-  const stringFields = ['title', 'company', 'location', 'description', 'category', 'applyUrl'];
+  const stringFields = ['title', 'company', 'location', 'description', 'category', 'profession', 'applyUrl'];
   stringFields.forEach(field => {
     if (sanitized[field]) {
       sanitized[field] = sanitizeString(sanitized[field]);
@@ -74,6 +95,136 @@ const sanitizeJob = (job) => {
   }
 
   return sanitized;
+};
+
+/**
+ * Profession Mapping
+ * Translates each external source's own category/tag values to the internal
+ * taxonomy (constants/professions.js) at ingestion time — never at query time.
+ * Anything that can't be mapped falls into "Other" instead of being dropped
+ * or left untagged.
+ */
+const PROFESSION = Object.fromEntries(PROFESSIONS.map((p) => [p, p]));
+const { Other: OTHER_PROFESSION } = PROFESSION;
+
+// Exact, per-source dictionaries: source label (lowercased) -> taxonomy value.
+// Used first; the generic keyword matcher below catches everything else.
+const PROFESSION_DICT = {
+  adzuna: {
+    'it jobs': PROFESSION['Software Engineering & IT'],
+    'software & web development jobs': PROFESSION['Software Engineering & IT'],
+    'telecoms jobs': PROFESSION['Software Engineering & IT'],
+    'accounting & finance jobs': PROFESSION['Finance & Accounting'],
+    'healthcare & nursing jobs': PROFESSION['Healthcare'],
+    'teaching jobs': PROFESSION['Education'],
+    'sales jobs': PROFESSION['Marketing & Sales'],
+    'marketing, advertising & pr jobs': PROFESSION['Marketing & Sales'],
+    'pr, advertising & marketing jobs': PROFESSION['Marketing & Sales'],
+    'retail jobs': PROFESSION['Marketing & Sales'],
+    'legal jobs': PROFESSION['Legal'],
+    'hr & recruitment jobs': PROFESSION['Human Resources'],
+    'creative & design jobs': PROFESSION['Design & Creative'],
+    'engineering jobs': PROFESSION['Engineering (Non-Software)'],
+    'trade & construction jobs': PROFESSION['Engineering (Non-Software)'],
+    'manufacturing jobs': PROFESSION['Engineering (Non-Software)'],
+    'maintenance jobs': PROFESSION['Engineering (Non-Software)'],
+    'customer services jobs': PROFESSION['Customer Support'],
+    'admin jobs': PROFESSION['Operations & Admin'],
+    'consultancy jobs': OTHER_PROFESSION,
+    'graduate jobs': OTHER_PROFESSION,
+    'social work jobs': OTHER_PROFESSION,
+    'travel jobs': OTHER_PROFESSION,
+    'other/general jobs': OTHER_PROFESSION,
+  },
+  findwork: {
+    'backend': PROFESSION['Software Engineering & IT'],
+    'frontend': PROFESSION['Software Engineering & IT'],
+    'full-stack': PROFESSION['Software Engineering & IT'],
+    'web development': PROFESSION['Software Engineering & IT'],
+    'software development': PROFESSION['Software Engineering & IT'],
+    'devops': PROFESSION['Software Engineering & IT'],
+    'cloud': PROFESSION['Software Engineering & IT'],
+    'security': PROFESSION['Software Engineering & IT'],
+    'data science': PROFESSION['Software Engineering & IT'],
+    'machine learning': PROFESSION['Software Engineering & IT'],
+    'mobile development': PROFESSION['Software Engineering & IT'],
+    'design': PROFESSION['Design & Creative'],
+    'marketing': PROFESSION['Marketing & Sales'],
+    'sales': PROFESSION['Marketing & Sales'],
+    'customer support': PROFESSION['Customer Support'],
+    'finance': PROFESSION['Finance & Accounting'],
+    'legal': PROFESSION['Legal'],
+    'hr': PROFESSION['Human Resources'],
+    'other': OTHER_PROFESSION,
+  },
+  remotive: {
+    'software development': PROFESSION['Software Engineering & IT'],
+    'devops / sysadmin': PROFESSION['Software Engineering & IT'],
+    'devops/sysadmin': PROFESSION['Software Engineering & IT'],
+    'data': PROFESSION['Software Engineering & IT'],
+    'qa': PROFESSION['Software Engineering & IT'],
+    'product': PROFESSION['Software Engineering & IT'],
+    'design': PROFESSION['Design & Creative'],
+    'marketing': PROFESSION['Marketing & Sales'],
+    'sales': PROFESSION['Marketing & Sales'],
+    'customer support': PROFESSION['Customer Support'],
+    'finance / legal': PROFESSION['Finance & Accounting'],
+    'finance/legal': PROFESSION['Finance & Accounting'],
+    'accounting / finance': PROFESSION['Finance & Accounting'],
+    'accounting/finance': PROFESSION['Finance & Accounting'],
+    'hr / talent': PROFESSION['Human Resources'],
+    'hr/talent': PROFESSION['Human Resources'],
+    'copywriting': PROFESSION['Writing & Content'],
+    'writing': PROFESSION['Writing & Content'],
+    'education': PROFESSION['Education'],
+    'medical & health': PROFESSION['Healthcare'],
+    'business': OTHER_PROFESSION,
+    'non tech': OTHER_PROFESSION,
+    'other': OTHER_PROFESSION,
+  },
+};
+
+// Generic keyword rules applied over a source's (category + tags) after the
+// exact dictionaries miss. Maintains the "never left untagged" guarantee.
+const PROFESSION_KEYWORD_RULES = [
+  [/software|developer|programming|backend|frontend|full-stack|fullstack|devops|sysadmin|'it | it |engineer|engineering|code|data (science|engineer)|machine learning|ai\b|cloud|security|qa\b|web\b|mobile\b/, PROFESSION['Software Engineering & IT']],
+  [/design|creative|ui\/ux|ux\b|artistic|graphic/, PROFESSION['Design & Creative']],
+  [/marketing|sales|advertis|campaign|seo|growth|business development|retail/, PROFESSION['Marketing & Sales']],
+  [/customer support|customer service|support (agent|specialist)|helpdesk|call center/, PROFESSION['Customer Support']],
+  [/account|finance|banking|accountancy|audit|tax\b|payroll|bookkeeping/, PROFESSION['Finance & Accounting']],
+  [/hr\b|human resource|recruitment|talent|people ops|hiring/, PROFESSION['Human Resources']],
+  [/admin|operation|office (manager|admin)|executive (assistant|admin)|coordinat|logistics|facilit/, PROFESSION['Operations & Admin']],
+  [/health|medical|nursing|clinical|pharma|patient|doctor|nurse/, PROFESSION['Healthcare']],
+  [/teacher|teaching|education|tutor|training|curriculum|academic/, PROFESSION['Education']],
+  [/write|writing|copywrit|content|editing|editorial|journalism|translator|blog/, PROFESSION['Writing & Content']],
+  [/legal|law\b|attorney|paralegal|compliance|contract/, PROFESSION['Legal']],
+  [/civil|mechanical|electrical|construction|machin|manufactur|maintenance|architect/, PROFESSION['Engineering (Non-Software)']],
+];
+
+const canonicalKey = (label) => String(label || '').toLowerCase().trim();
+
+/**
+ * Map a single external job to the internal profession taxonomy.
+ * Order: exact source dictionary -> generic keyword rules -> "Other".
+ * @param {string} source - External source name
+ * @param {string} category - Source category label
+ * @param {Array<string>} tags - Source tags
+ * @param {string} title - Job title
+ * @returns {string} A profession from constants/professions.js
+ */
+const mapSourceProfession = (source, category, tags = [], title = '') => {
+  const dict = PROFESSION_DICT[source] || {};
+  const direct = dict[canonicalKey(category)];
+  if (direct) return direct;
+
+  const haystack = `${category || ''} ${tags.join(' ') || ''} ${title || ''}`
+    .toLowerCase();
+
+  for (const [pattern, profession] of PROFESSION_KEYWORD_RULES) {
+    if (pattern.test(haystack)) return profession;
+  }
+
+  return OTHER_PROFESSION;
 };
 
 /**
@@ -95,6 +246,7 @@ const normalizeJob = (job, source) => {
     source: source,
     postedAt: null,
     category: '',
+    profession: '',
     tags: [],
     remote: false,
   };
@@ -180,6 +332,14 @@ const normalizeJob = (job, source) => {
     default:
       throw new Error(`Unknown source: ${source}`);
   }
+
+  // Tag the job with an internal taxonomy profession at ingestion time.
+  normalized.profession = mapSourceProfession(
+    source,
+    normalized.category,
+    normalized.tags,
+    normalized.title
+  );
 
   // Sanitize the normalized job to prevent XSS
   return sanitizeJob(normalized);
@@ -457,6 +617,10 @@ const fetchArbeitnowJobs = async (params = {}) => {
  * @returns {Promise<Object>} Aggregated jobs by source
  */
 const aggregateJobs = async (params = {}, sources = null) => {
+  const cacheKey = `external-jobs:${getCacheKey(params, sources)}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
   const allSources = ['adzuna', 'findwork', 'remotive', 'arbeitnow'];
   const sourcesToFetch = sources || allSources;
 
@@ -477,6 +641,8 @@ const aggregateJobs = async (params = {}, sources = null) => {
   if (sourcesToFetch.includes('arbeitnow')) {
     results.arbeitnow = await fetchArbeitnowJobs(params);
   }
+
+  cache.set(cacheKey, results);
 
   return results;
 };
@@ -538,6 +704,7 @@ const getSourceStatus = () => {
 
 module.exports = {
   normalizeJob,
+  mapSourceProfession,
   fetchAdzunaJobs,
   fetchFindworkJobs,
   fetchRemotiveJobs,

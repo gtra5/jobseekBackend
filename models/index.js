@@ -10,6 +10,11 @@ const Application = require('./Application');
 const Notification = require('./Notification');
 const RefreshToken = require('./RefreshToken');
 const OTP = require('./OTP');
+const Assessment = require('./Assessment');
+const AssessmentResult = require('./AssessmentResult');
+const Conversation = require('./Conversation');
+const Message = require('./Message');
+const { seedAssessments } = require('./seedAssessment');
 
 module.exports = {
   User,
@@ -18,4 +23,9 @@ module.exports = {
   Notification,
   RefreshToken,
   OTP,
+  Assessment,
+  AssessmentResult,
+  Conversation,
+  Message,
+  seedAssessments,
 };

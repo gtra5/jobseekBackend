@@ -11,6 +11,17 @@ const {
   getRemotiveCategories,
   getSourceStatus,
 } = require('../services/jobSourcingService');
+const PROFESSIONS = require('../constants/professions');
+
+/**
+ * Parse an integer and clamp it to [min, max].
+ * Returns `fallback` when the input is missing or not a number.
+ */
+const clampInt = (value, min, max, fallback) => {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+};
 
 /**
  * GET /api/external-jobs/aggregate
@@ -33,10 +44,10 @@ const aggregateExternalJobs = asyncHandler(async (req, res) => {
     category: category || '',
     minSalary: minSalary ? parseInt(minSalary) : null,
     maxSalary: maxSalary ? parseInt(maxSalary) : null,
-    page: parseInt(req.query.page) || 1,
-    limit: parseInt(req.query.limit) || 10,
+    page: clampInt(req.query.page, 1, 1000, 1),
+    limit: clampInt(req.query.limit, 1, 50, 10),
     remote: req.query.remote === 'true',
-    days: days ? parseInt(days) : 30, // Default to 30 days if not specified
+    days: clampInt(days, 1, 90, 30), // Default to 30 days if not specified
   };
 
   const aggregatedJobs = await aggregateJobs(params, sourcesArray);
@@ -56,7 +67,7 @@ const aggregateExternalJobs = asyncHandler(async (req, res) => {
  * Get flattened list of all external jobs
  */
 const getAllExternalJobs = asyncHandler(async (req, res) => {
-  const { keywords, location, jobType, category, minSalary, maxSalary, sources, days } = req.query;
+  const { keywords, location, jobType, professions, category, minSalary, maxSalary, sources, days } = req.query;
 
   // Parse sources if provided as comma-separated string
   let sourcesArray = null;
@@ -72,10 +83,10 @@ const getAllExternalJobs = asyncHandler(async (req, res) => {
     category: category || '',
     minSalary: minSalary ? parseInt(minSalary) : null,
     maxSalary: maxSalary ? parseInt(maxSalary) : null,
-    page: parseInt(req.query.page) || 1,
-    limit: parseInt(req.query.limit) || 10,
+    page: clampInt(req.query.page, 1, 1000, 1),
+    limit: clampInt(req.query.limit, 1, 50, 10),
     remote: req.query.remote === 'true',
-    days: days ? parseInt(days) : 30, // Default to 30 days if not specified
+    days: clampInt(days, 1, 90, 30),
   };
 
   const allJobs = await getAllJobs(params, sourcesArray);
@@ -106,9 +117,23 @@ const getAllExternalJobs = asyncHandler(async (req, res) => {
     filteredJobs = filteredJobs.filter(job => job.remote);
   }
 
-  // Pagination
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
+  // Filter by profession (internal taxonomy, applied post-ingestion since
+  // external APIs can't filter by Voraq's taxonomy)
+  if (professions) {
+    const wanted = professions
+      .split(',')
+      .map(p => p.trim())
+      .filter(p => PROFESSIONS.includes(p));
+    if (wanted.length > 0) {
+      filteredJobs = filteredJobs.filter(job =>
+        job.profession && wanted.includes(job.profession)
+      );
+    }
+  }
+
+  // Pagination (uses values already clamped above)
+  const page = params.page;
+  const limit = params.limit;
   const startIndex = (page - 1) * limit;
   const endIndex = startIndex + limit;
   const paginatedJobs = filteredJobs.slice(startIndex, endIndex);
@@ -141,10 +166,10 @@ const getJobsBySource = asyncHandler(async (req, res) => {
   const params = {
     keywords: keywords || '',
     location: location || '',
-    page: parseInt(page),
-    limit: parseInt(limit),
+    page: clampInt(page, 1, 1000, 1),
+    limit: clampInt(limit, 1, 50, 10),
     remote: req.query.remote === 'true',
-    days: days ? parseInt(days) : 30, // Default to 30 days if not specified
+    days: clampInt(days, 1, 90, 30),
   };
 
   const aggregated = await aggregateJobs(params, [source.toLowerCase()]);

@@ -51,20 +51,20 @@ const preRegister = asyncHandler(async (req, res) => {
     lastName,
   };
 
-  // Unlike the completed-registration flow (where the account already
-  // exists and the email is a bonus), this send IS awaited: no account
-  // exists yet, so the OTP email is the entire deliverable of this
-  // request. If it fails, the frontend needs a real error to show the
-  // user instead of a false "check your email" for a code that never
-  // arrives. The 10s connection/greeting/socket timeouts configured on
-  // the transporter in otpService keep this from hanging indefinitely.
+  // Persistence is the deliverable of this request: the OTP record (with
+  // pendingData) is created, and any older unverified record deleted, before
+  // we tell the user to check their email. That way a later /resend-otp always
+  // finds and replaces a real persisted record — it can never race one that is
+  // still mid-write. Only SMTP delivery is detached (see
+  // otpService.persistAndSendOTP), so a slow or failing mail server can't hold
+  // this response hostage.
   try {
-    await otpService.generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, pendingData);
+    await otpService.persistAndSendOTP(normalizedEmail, 'registration', req.ip, pendingData);
   } catch (err) {
-    console.error('[pre-register] Failed to send OTP email:', err.message);
+    console.error('[pre-register] Failed to create OTP record:', err.message);
     return ApiResponse.badRequest(
       res,
-      err.message || 'Failed to send verification code. Please try again.'
+      err.message || 'Failed to generate verification code. Please try again.'
     );
   }
 
@@ -486,12 +486,14 @@ const resendOTP = asyncHandler(async (req, res) => {
       return ApiResponse.success(res, 200, 'If a pending registration exists, a new code has been sent');
     }
 
-    // Re-use the pendingData from the existing OTP record. Awaited for the
-    // same reason as preRegister: this email IS the deliverable, and the
-    // pending-registration existence check above already means there's no
-    // enumeration concern left to protect by staying fire-and-forget here.
+    // Re-use the pendingData from the existing OTP record. The new record is
+    // persisted (deleteMany + insert) and only SMTP delivery is detached — see
+    // otpService.persistAndSendOTP. Because preRegister also awaits persistence
+    // before responding, this resend always replaces a durable record, so the
+    // newest verification record in the DB is always the one this request
+    // created (or a later one) — never an OTP that registration is mid-write.
     try {
-      await otpService.generateAndSendOTP(null, normalizedEmail, 'registration', req.ip, existingOTP.pendingData);
+      await otpService.persistAndSendOTP(normalizedEmail, 'registration', req.ip, existingOTP.pendingData);
     } catch (err) {
       console.error(`[resend-otp/registration] Failed for ${normalizedEmail}:`, err.message);
       return ApiResponse.badRequest(

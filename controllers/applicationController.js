@@ -3,6 +3,7 @@
  * Handles job applications, interviews, ratings, and status management
  */
 
+const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/apiResponse');
 const Application = require('../models/Application');
@@ -10,6 +11,35 @@ const Job = require('../models/Job');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 const emailService = require('../services/emailService');
+const { getAllJobs } = require('../services/jobSourcingService');
+
+/**
+ * Helper function to check if a string is a valid MongoDB ObjectId
+ */
+const isValidObjectId = (id) => {
+  return /^[0-9a-fA-F]{24}$/.test(id);
+};
+
+/**
+ * Helper function to get job data (handles both MongoDB and external jobs)
+ */
+const getJobData = async (jobId) => {
+  if (isValidObjectId(jobId)) {
+    // Query MongoDB Job collection
+    const job = await Job.findById(jobId).select('title location jobType salary description requirements benefits isActive').lean();
+    return job;
+  } else {
+    // Query external job service
+    try {
+      const externalJobs = await getAllJobs({ page: 1, limit: 100 }, ['adzuna', 'findwork', 'remotive', 'arbeitnow']);
+      const externalJob = externalJobs.find(job => job.id === jobId || job._id === jobId);
+      return externalJob || null;
+    } catch (error) {
+      console.error('Error fetching external job:', error);
+      return null;
+    }
+  }
+};
 
 /**
  * POST /api/applications/:jobId
@@ -26,61 +56,82 @@ const applyToJob = asyncHandler(async (req, res) => {
   if (!job) {
     return ApiResponse.notFound(res, 'Job not found');
   }
-  if (!job.isActive || job.status !== 'open') {
+  // Job.js has no status field — use isActive/isDeleted
+  if (!job.isActive || job.isDeleted) {
     return ApiResponse.badRequest(res, 'This job is no longer accepting applications');
   }
 
   // Prevent applying to own job
-  if (job.employerId.toString() === applicantId) {
+  if (job.employer.toString() === applicantId) {
     return ApiResponse.badRequest(res, 'You cannot apply to your own job posting');
   }
 
   // Check if already applied
   const existingApplication = await Application.findOne({
-    jobId,
-    applicantId,
+    job: jobId,
+    jobSeeker: applicantId,
     status: { $ne: 'withdrawn' },
   });
   if (existingApplication) {
     return ApiResponse.conflict(res, 'You have already applied for this job');
   }
 
-  // Create application
-  const application = await Application.create({
-    jobId,
-    applicantId,
-    employerId: job.employerId,
+  // Build the application document using the real schema field names.
+  // expectedSalary and availability are not in Application.js's schema so we
+  // store them only if they were provided, avoiding silent data loss.
+  const applicationData = {
+    job: jobId,
+    jobSeeker: applicantId,
+    employer: job.employer,
     coverLetter: coverLetter || '',
-    resumeUrl: resumeUrl || '',
-    expectedSalary: expectedSalary || null,
-    availability: availability || '',
     status: 'pending',
     appliedAt: new Date(),
-  });
+  };
+
+  // resumeSnapshot is what the schema defines (not resumeUrl)
+  if (resumeUrl) {
+    applicationData.resumeSnapshot = { url: resumeUrl };
+  }
+
+  // expectedSalary / availability are not on the Application schema —
+  // store in employerNotes as a lightweight workaround so the data is
+  // not silently dropped.
+  const extras = [];
+  if (expectedSalary != null) extras.push(`expectedSalary: ${expectedSalary}`);
+  if (availability) extras.push(`availability: ${availability}`);
+  if (extras.length) applicationData.employerNotes = extras.join(', ');
+
+  const application = await Application.create(applicationData);
 
   // Populate for response
   await application.populate([
-    { path: 'jobId', select: 'title company location jobType' },
-    { path: 'employerId', select: 'firstName lastName email company' },
+    { path: 'job', select: 'title location jobType' },
+    { path: 'employer', select: 'firstName lastName email company' },
   ]);
 
   // Notify employer
-  await Notification.create({
-    userId: job.employerId,
-    type: 'new_application',
-    title: 'New Job Application',
-    message: `You have a new application for "${job.title}"`,
-    data: { applicationId: application._id, jobId: job._id },
-  });
+  try {
+    await Notification.create({
+      recipient: job.employer,
+      type: 'application_received',
+      title: 'New Job Application',
+      message: `You have a new application for "${job.title}"`,
+      data: { applicationId: application._id, jobId: job._id },
+    });
+  } catch (notifErr) {
+    console.error('Failed to create application notification:', notifErr.message);
+  }
 
   // Send email notification to employer
   try {
-    const employer = await User.findById(job.employerId);
-    if (employer && employer.notificationSettings?.emailNotifications !== false) {
-      await emailService.sendApplicationNotification(employer.email, {
-        jobTitle: job.title,
-        applicantName: `${req.user?.firstName || ''} ${req.user?.lastName || ''}`.trim(),
-      });
+    const employer = await User.findById(job.employer);
+    if (employer && employer.notificationSettings?.email?.applicationUpdates !== false) {
+      await emailService.sendApplicationStatusEmail(
+        employer.email,
+        `${employer.firstName || ''} ${employer.lastName || ''}`.trim(),
+        job.title,
+        'new_application'
+      );
     }
   } catch (emailErr) {
     // Non-critical: log but don't fail the request
@@ -90,12 +141,10 @@ const applyToJob = asyncHandler(async (req, res) => {
   return ApiResponse.created(res, 'Application submitted successfully', {
     application: {
       id: application._id,
-      job: application.jobId,
+      job: application.job,
       status: application.status,
       coverLetter: application.coverLetter,
-      resumeUrl: application.resumeUrl,
-      expectedSalary: application.expectedSalary,
-      availability: application.availability,
+      resumeSnapshot: application.resumeSnapshot,
       appliedAt: application.appliedAt,
     },
   });
@@ -114,59 +163,69 @@ const getMyApplications = asyncHandler(async (req, res) => {
     return ApiResponse.notFound(res, 'User not found');
   }
 
-  let applications;
   const { status, page = 1, limit = 10, sortBy = 'appliedAt', order = 'desc' } = req.query;
 
   const query = {};
-  const options = {
-    page: parseInt(page, 10),
-    limit: parseInt(limit, 10),
-    sort: { [sortBy]: order === 'asc' ? 1 : -1 },
-    populate: [
-      { path: 'jobId', select: 'title company location jobType salary status' },
-      { path: 'employerId', select: 'firstName lastName email company' },
-    ],
-  };
 
   if (user.role === 'jobseeker') {
-    query.applicantId = userId;
+    query.jobSeeker = userId;
   } else if (user.role === 'employer') {
-    query.employerId = userId;
+    query.employer = userId;
   }
 
   if (status) {
     query.status = status;
   }
 
-  const skip = (options.page - 1) * options.limit;
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+  const skip = (pageNum - 1) * limitNum;
 
-  applications = await Application.find(query)
-    .populate(options.populate)
-    .sort(options.sort)
+  const applications = await Application.find(query)
+    .populate({ path: 'employer', select: 'firstName lastName email company' })
+    .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
     .skip(skip)
-    .limit(options.limit);
+    .limit(limitNum);
+
+  // Handle job population for each application (supports both MongoDB and external job IDs)
+  const applicationsWithJobs = await Promise.all(
+    applications.map(async (app) => {
+      const appObj = app.toObject();
+      
+      // Check if job field is a valid ObjectId before populating
+      if (app.job && isValidObjectId(app.job.toString())) {
+        const job = await Job.findById(app.job).select('title location jobType salary isActive').lean();
+        appObj.job = job;
+      } else if (app.job) {
+        // It's an external job ID, fetch from external service
+        const externalJob = await getJobData(app.job.toString());
+        appObj.job = externalJob;
+      }
+      
+      return appObj;
+    })
+  );
 
   const total = await Application.countDocuments(query);
 
   return ApiResponse.success(res, 200, 'Applications retrieved successfully', {
-    applications: applications.map((app) => ({
+    applications: applicationsWithJobs.map((app) => ({
       id: app._id,
-      job: app.jobId,
-      employer: app.employerId,
+      job: app.job,
+      employer: app.employer,
       status: app.status,
       coverLetter: app.coverLetter,
-      resumeUrl: app.resumeUrl,
-      expectedSalary: app.expectedSalary,
+      resumeSnapshot: app.resumeSnapshot,
       rating: app.rating,
       appliedAt: app.appliedAt,
       updatedAt: app.updatedAt,
-      interview: app.interview || null,
+      interviews: app.interviews || [],
     })),
     pagination: {
-      page: options.page,
-      limit: options.limit,
+      page: pageNum,
+      limit: limitNum,
       total,
-      pages: Math.ceil(total / options.limit),
+      pages: Math.ceil(total / limitNum),
     },
   });
 });
@@ -181,18 +240,27 @@ const getApplicationById = asyncHandler(async (req, res) => {
   const userId = req.userId;
 
   const application = await Application.findById(applicationId)
-    .populate('jobId', 'title description company location jobType salary requirements benefits status')
-    .populate('applicantId', 'firstName lastName email phone avatar profile')
-    .populate('employerId', 'firstName lastName email company');
+    .populate('jobSeeker', 'firstName lastName email phone avatar profile')
+    .populate('employer', 'firstName lastName email company');
 
   if (!application) {
     return ApiResponse.notFound(res, 'Application not found');
   }
 
-  // Authorization: only applicant, employer, or admin can view
+  // Handle job population (supports both MongoDB and external job IDs)
+  if (application.job && isValidObjectId(application.job.toString())) {
+    const job = await Job.findById(application.job).select('title description location jobType salary requirements benefits isActive').lean();
+    application.job = job;
+  } else if (application.job) {
+    // It's an external job ID, fetch from external service
+    const externalJob = await getJobData(application.job.toString());
+    application.job = externalJob;
+  }
+
+  // Authorization: only jobSeeker, employer, or admin can view
   const isAuthorized =
-    application.applicantId._id.toString() === userId ||
-    application.employerId._id.toString() === userId ||
+    application.jobSeeker._id.toString() === userId ||
+    application.employer._id.toString() === userId ||
     req.userRole === 'admin';
 
   if (!isAuthorized) {
@@ -202,19 +270,17 @@ const getApplicationById = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, 200, 'Application retrieved successfully', {
     application: {
       id: application._id,
-      job: application.jobId,
-      applicant: application.applicantId,
-      employer: application.employerId,
+      job: application.job,
+      applicant: application.jobSeeker,
+      employer: application.employer,
       status: application.status,
       coverLetter: application.coverLetter,
-      resumeUrl: application.resumeUrl,
-      expectedSalary: application.expectedSalary,
-      availability: application.availability,
+      resumeSnapshot: application.resumeSnapshot,
       rating: application.rating,
-      feedback: application.feedback,
+      employerNotes: application.employerNotes,
       appliedAt: application.appliedAt,
       updatedAt: application.updatedAt,
-      interview: application.interview || null,
+      interviews: application.interviews || [],
     },
   });
 });
@@ -229,7 +295,7 @@ const updateApplicationStatus = asyncHandler(async (req, res) => {
   const { status, feedback } = req.body;
   const employerId = req.userId;
 
-  const validStatuses = ['pending', 'reviewing', 'shortlisted', 'rejected', 'hired', 'interview'];
+  const validStatuses = ['pending', 'reviewed', 'shortlisted', 'interview', 'offered', 'rejected', 'hired'];
   if (!validStatuses.includes(status)) {
     return ApiResponse.badRequest(res, `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
   }
@@ -240,7 +306,7 @@ const updateApplicationStatus = asyncHandler(async (req, res) => {
   }
 
   // Verify ownership
-  if (application.employerId.toString() !== employerId) {
+  if (application.employer.toString() !== employerId) {
     return ApiResponse.forbidden(res, 'You can only update applications for your own jobs');
   }
 
@@ -252,35 +318,42 @@ const updateApplicationStatus = asyncHandler(async (req, res) => {
   const previousStatus = application.status;
   application.status = status;
   if (feedback !== undefined) {
-    application.feedback = feedback;
+    application.employerNotes = feedback;
   }
-  application.updatedAt = new Date();
   await application.save();
 
   // Populate for notification
   await application.populate([
-    { path: 'jobId', select: 'title' },
-    { path: 'applicantId', select: 'firstName lastName email notificationSettings' },
+    { path: 'job', select: 'title' },
+    { path: 'jobSeeker', select: 'firstName lastName email notificationSettings' },
   ]);
 
   // Notify applicant
-  await Notification.create({
-    userId: application.applicantId._id,
-    type: 'application_status_update',
-    title: 'Application Status Updated',
-    message: `Your application for "${application.jobId.title}" has been updated to "${status}"`,
-    data: { applicationId: application._id, jobId: application.jobId._id, status },
-  });
-
-  // Send email notification
   try {
-    if (application.applicantId.notificationSettings?.emailNotifications !== false) {
-      await emailService.sendStatusUpdateEmail(application.applicantId.email, {
-        applicantName: `${application.applicantId.firstName} ${application.applicantId.lastName}`,
-        jobTitle: application.jobId.title,
-        status: status.charAt(0).toUpperCase() + status.slice(1),
-        feedback: feedback || '',
-      });
+    const notifType =
+      status === 'offered' ? 'job_offer' :
+      status === 'rejected' ? 'application_rejected' :
+      'application_status';
+    await Notification.create({
+      recipient: application.jobSeeker._id,
+      type: notifType,
+      title: 'Application Status Updated',
+      message: `Your application for "${application.job.title}" has been updated to "${status}"`,
+      data: { applicationId: application._id, jobId: application.job._id, status },
+    });
+  } catch (notifErr) {
+    console.error('Failed to create status notification:', notifErr.message);
+  }
+
+  // Send email notification using the real function name
+  try {
+    if (application.jobSeeker.notificationSettings?.email?.applicationUpdates !== false) {
+      await emailService.sendApplicationStatusEmail(
+        application.jobSeeker.email,
+        `${application.jobSeeker.firstName} ${application.jobSeeker.lastName}`,
+        application.job.title,
+        status
+      );
     }
   } catch (emailErr) {
     console.error('Failed to send status update email:', emailErr.message);
@@ -291,7 +364,7 @@ const updateApplicationStatus = asyncHandler(async (req, res) => {
       id: application._id,
       status: application.status,
       previousStatus,
-      feedback: application.feedback,
+      employerNotes: application.employerNotes,
       updatedAt: application.updatedAt,
     },
   });
@@ -311,7 +384,7 @@ const withdrawApplication = asyncHandler(async (req, res) => {
     return ApiResponse.notFound(res, 'Application not found');
   }
 
-  if (application.applicantId.toString() !== applicantId) {
+  if (application.jobSeeker.toString() !== applicantId) {
     return ApiResponse.forbidden(res, 'You can only withdraw your own applications');
   }
 
@@ -324,23 +397,27 @@ const withdrawApplication = asyncHandler(async (req, res) => {
   }
 
   application.status = 'withdrawn';
-  application.updatedAt = new Date();
+  application.withdrawnAt = new Date();
   await application.save();
 
   // Notify employer
-  await Notification.create({
-    userId: application.employerId,
-    type: 'application_withdrawn',
-    title: 'Application Withdrawn',
-    message: 'An applicant has withdrawn their application',
-    data: { applicationId: application._id },
-  });
+  try {
+    await Notification.create({
+      recipient: application.employer,
+      type: 'application_status',
+      title: 'Application Withdrawn',
+      message: 'An applicant has withdrawn their application',
+      data: { applicationId: application._id },
+    });
+  } catch (notifErr) {
+    console.error('Failed to create withdrawal notification:', notifErr.message);
+  }
 
   return ApiResponse.success(res, 200, 'Application withdrawn successfully', {
     application: {
       id: application._id,
       status: application.status,
-      updatedAt: application.updatedAt,
+      withdrawnAt: application.withdrawnAt,
     },
   });
 });
@@ -360,11 +437,11 @@ const getJobApplications = asyncHandler(async (req, res) => {
   if (!job) {
     return ApiResponse.notFound(res, 'Job not found');
   }
-  if (job.employerId.toString() !== employerId) {
+  if (job.employer.toString() !== employerId) {
     return ApiResponse.forbidden(res, 'You can only view applications for your own jobs');
   }
 
-  const query = { jobId };
+  const query = { job: jobId };
   if (status) {
     query.status = status;
   }
@@ -374,11 +451,24 @@ const getJobApplications = asyncHandler(async (req, res) => {
   const skip = (pageNum - 1) * limitNum;
 
   const applications = await Application.find(query)
-    .populate('applicantId', 'firstName lastName email phone avatar profile')
-    .populate('jobId', 'title company location jobType')
+    .populate('jobSeeker', 'firstName lastName email phone avatar profile')
     .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
     .skip(skip)
     .limit(limitNum);
+
+  // Add job info to each application
+  const applicationsWithJob = await Promise.all(
+    applications.map(async (app) => {
+      const appObj = app.toObject();
+      appObj.job = {
+        id: job._id,
+        title: job.title,
+        location: job.location,
+        jobType: job.jobType
+      };
+      return appObj;
+    })
+  );
 
   const total = await Application.countDocuments(query);
 
@@ -386,19 +476,17 @@ const getJobApplications = asyncHandler(async (req, res) => {
     job: {
       id: job._id,
       title: job.title,
-      company: job.company,
     },
-    applications: applications.map((app) => ({
+    applications: applicationsWithJob.map((app) => ({
       id: app._id,
-      applicant: app.applicantId,
+      applicant: app.jobSeeker,
       status: app.status,
       coverLetter: app.coverLetter,
-      resumeUrl: app.resumeUrl,
-      expectedSalary: app.expectedSalary,
+      resumeSnapshot: app.resumeSnapshot,
       rating: app.rating,
       appliedAt: app.appliedAt,
       updatedAt: app.updatedAt,
-      interview: app.interview || null,
+      interviews: app.interviews || [],
     })),
     pagination: {
       page: pageNum,
@@ -418,7 +506,7 @@ const getEmployerApplications = asyncHandler(async (req, res) => {
   const employerId = req.userId;
   const { status, page = 1, limit = 10, sortBy = 'appliedAt', order = 'desc' } = req.query;
 
-  const query = { employerId };
+  const query = { employer: employerId };
   if (status) {
     query.status = status;
   }
@@ -428,17 +516,35 @@ const getEmployerApplications = asyncHandler(async (req, res) => {
   const skip = (pageNum - 1) * limitNum;
 
   const applications = await Application.find(query)
-    .populate('applicantId', 'firstName lastName email phone avatar profile')
-    .populate('jobId', 'title company location jobType salary')
+    .populate('jobSeeker', 'firstName lastName email phone avatar profile')
     .sort({ [sortBy]: order === 'asc' ? 1 : -1 })
     .skip(skip)
     .limit(limitNum);
 
+  // Handle job population for each application (supports both MongoDB and external job IDs)
+  const applicationsWithJobs = await Promise.all(
+    applications.map(async (app) => {
+      const appObj = app.toObject();
+      
+      // Check if job field is a valid ObjectId before populating
+      if (app.job && isValidObjectId(app.job.toString())) {
+        const job = await Job.findById(app.job).select('title location jobType salary').lean();
+        appObj.job = job;
+      } else if (app.job) {
+        // It's an external job ID, fetch from external service
+        const externalJob = await getJobData(app.job.toString());
+        appObj.job = externalJob;
+      }
+      
+      return appObj;
+    })
+  );
+
   const total = await Application.countDocuments(query);
 
-  // Get summary stats
+  // Get summary stats — use `new` as required by Mongoose 6+
   const stats = await Application.aggregate([
-    { $match: { employerId: require('mongoose').Types.ObjectId(employerId) } },
+    { $match: { employer: new mongoose.Types.ObjectId(employerId) } },
     {
       $group: {
         _id: '$status',
@@ -453,18 +559,17 @@ const getEmployerApplications = asyncHandler(async (req, res) => {
   });
 
   return ApiResponse.success(res, 200, 'All employer applications retrieved successfully', {
-    applications: applications.map((app) => ({
+    applications: applicationsWithJobs.map((app) => ({
       id: app._id,
-      job: app.jobId,
-      applicant: app.applicantId,
+      job: app.job,
+      applicant: app.jobSeeker,
       status: app.status,
       coverLetter: app.coverLetter,
-      resumeUrl: app.resumeUrl,
-      expectedSalary: app.expectedSalary,
+      resumeSnapshot: app.resumeSnapshot,
       rating: app.rating,
       appliedAt: app.appliedAt,
       updatedAt: app.updatedAt,
-      interview: app.interview || null,
+      interviews: app.interviews || [],
     })),
     stats: {
       total,
@@ -498,7 +603,7 @@ const scheduleInterview = asyncHandler(async (req, res) => {
     return ApiResponse.notFound(res, 'Application not found');
   }
 
-  if (application.employerId.toString() !== employerId) {
+  if (application.employer.toString() !== employerId) {
     return ApiResponse.forbidden(res, 'You can only schedule interviews for your own jobs');
   }
 
@@ -506,55 +611,56 @@ const scheduleInterview = asyncHandler(async (req, res) => {
     return ApiResponse.badRequest(res, 'Cannot schedule interview for a withdrawn application');
   }
 
-  // Set interview details
-  application.interview = {
+  // Push a new entry into the interviews array (schema uses `interviews`, not `interview`)
+  const interviewEntry = {
     scheduledAt: new Date(scheduledAt),
-    type: type || 'video', // video, phone, in-person
+    type: type || 'video',
     location: location || '',
     meetingLink: meetingLink || '',
     notes: notes || '',
-    duration: duration || 60, // minutes
+    duration: duration || 60,
     status: 'scheduled',
-    createdAt: new Date(),
   };
 
-  // Update application status to interview
+  application.interviews.push(interviewEntry);
   application.status = 'interview';
-  application.updatedAt = new Date();
   await application.save();
 
   // Populate for notifications
   await application.populate([
-    { path: 'jobId', select: 'title' },
-    { path: 'applicantId', select: 'firstName lastName email notificationSettings' },
+    { path: 'job', select: 'title' },
+    { path: 'jobSeeker', select: 'firstName lastName email notificationSettings' },
   ]);
 
-  // Notify applicant
-  await Notification.create({
-    userId: application.applicantId._id,
-    type: 'interview_scheduled',
-    title: 'Interview Scheduled',
-    message: `You have been scheduled for an interview for "${application.jobId.title}"`,
-    data: {
-      applicationId: application._id,
-      jobId: application.jobId._id,
-      interview: application.interview,
-    },
-  });
+  const scheduledInterview = application.interviews[application.interviews.length - 1];
 
-  // Send email
+  // Notify applicant
   try {
-    if (application.applicantId.notificationSettings?.emailNotifications !== false) {
-      await emailService.sendInterviewInvitation(application.applicantId.email, {
-        applicantName: `${application.applicantId.firstName} ${application.applicantId.lastName}`,
-        jobTitle: application.jobId.title,
-        scheduledAt: application.interview.scheduledAt,
-        type: application.interview.type,
-        location: application.interview.location,
-        meetingLink: application.interview.meetingLink,
-        notes: application.interview.notes,
-        duration: application.interview.duration,
-      });
+    await Notification.create({
+      recipient: application.jobSeeker._id,
+      type: 'interview_scheduled',
+      title: 'Interview Scheduled',
+      message: `You have been scheduled for an interview for "${application.job.title}"`,
+      data: {
+        applicationId: application._id,
+        jobId: application.job._id,
+        interview: scheduledInterview,
+      },
+    });
+  } catch (notifErr) {
+    console.error('Failed to create interview notification:', notifErr.message);
+  }
+
+  // Send email using the real function name and matching its signature
+  try {
+    if (application.jobSeeker.notificationSettings?.email?.applicationUpdates !== false) {
+      await emailService.sendInterviewEmail(
+        application.jobSeeker.email,
+        `${application.jobSeeker.firstName} ${application.jobSeeker.lastName}`,
+        application.job.title,
+        scheduledInterview.scheduledAt,
+        scheduledInterview.type
+      );
     }
   } catch (emailErr) {
     console.error('Failed to send interview email:', emailErr.message);
@@ -564,7 +670,7 @@ const scheduleInterview = asyncHandler(async (req, res) => {
     application: {
       id: application._id,
       status: application.status,
-      interview: application.interview,
+      interview: scheduledInterview,
     },
   });
 });
@@ -590,16 +696,15 @@ const rateApplication = asyncHandler(async (req, res) => {
     return ApiResponse.notFound(res, 'Application not found');
   }
 
-  if (application.employerId.toString() !== employerId) {
+  if (application.employer.toString() !== employerId) {
     return ApiResponse.forbidden(res, 'You can only rate applications for your own jobs');
   }
 
-  application.rating = {
-    score: ratingNum,
-    review: review || '',
-    ratedAt: new Date(),
-  };
-  application.updatedAt = new Date();
+  // rating is a plain Number on the schema (not an object)
+  application.rating = ratingNum;
+  if (review) {
+    application.employerNotes = review;
+  }
   await application.save();
 
   return ApiResponse.success(res, 200, 'Application rated successfully', {

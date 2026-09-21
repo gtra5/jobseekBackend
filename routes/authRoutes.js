@@ -8,13 +8,14 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const { authenticate } = require('../middleware/authMiddleware');
 const { authValidators } = require('../middleware/validateRequest');
+const { otpRateLimiter } = require('../middleware/otpRateLimit');
 
 /**
  * @route   POST /api/auth/pre-register
  * @desc    Step 1: Validate signup inputs, send OTP — no User created yet
  * @access  Public
  */
-router.post('/pre-register', authValidators.preRegister, authController.preRegister);
+router.post('/pre-register', otpRateLimiter, authValidators.preRegister, authController.preRegister);
 
 /**
  * @route   POST /api/auth/register
@@ -70,7 +71,7 @@ router.post('/verify-email', authValidators.verifyOTP, authController.verifyEmai
  * @desc    Resend OTP (registration or password reset)
  * @access  Public
  */
-router.post('/resend-otp', authController.resendOTP);
+router.post('/resend-otp', otpRateLimiter, authController.resendOTP);
 
 /**
  * @route   GET /api/auth/me

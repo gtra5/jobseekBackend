@@ -13,8 +13,11 @@ yarn-error.log*
 logs/
 *.log
 
+# Scripts (test utilities)
+scripts/
+
 # Security documentation (contains sensitive procedures)
-SECURITY_*.md
+SECURITY.md
 
 # OS files
 .DS_Store

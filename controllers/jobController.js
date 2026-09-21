@@ -6,6 +6,9 @@
 const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/apiResponse');
 const { Job, Application } = require('../models');
+const PROFESSIONS = require('../constants/professions');
+// Alias the imported service function to avoid naming conflicts with the controller
+const { getAllJobs: fetchExternalJobs } = require('../services/jobSourcingService');
 
 /**
  * POST /api/jobs
@@ -17,6 +20,7 @@ const createJob = asyncHandler(async (req, res) => {
     description,
     location,
     jobType,
+    profession,
     category,
     salary,
     skills,
@@ -33,6 +37,7 @@ const createJob = asyncHandler(async (req, res) => {
     description,
     location,
     jobType,
+    profession,
     category,
     salary,
     skills,
@@ -55,6 +60,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
     keywords,
     location,
     jobType,
+    professions,
     category,
     minSalary,
     maxSalary,
@@ -90,6 +96,18 @@ const getAllJobs = asyncHandler(async (req, res) => {
   // Job type filter
   if (jobType) {
     query.jobType = jobType;
+  }
+
+  // Profession filter — comma-separated list of taxonomy values. Invalid
+  // values are ignored so a stale/bad param still returns the general feed.
+  if (professions) {
+    const wanted = professions
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => PROFESSIONS.includes(p));
+    if (wanted.length > 0) {
+      query.profession = { $in: wanted };
+    }
   }
 
   // Category filter
@@ -138,6 +156,7 @@ const getAllJobs = asyncHandler(async (req, res) => {
   const skip = Math.max(0, (pageNum - 1) * limitNum);
 
   const jobs = await Job.find(query)
+    .populate('employer', 'firstName lastName company.name company.logo')
     .sort(sort)
     .skip(skip)
     .limit(limitNum);
@@ -157,23 +176,45 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/jobs/:jobId
- * Get job by ID
+ * Get job by ID (handles both MongoDB ObjectIds and external job IDs)
  */
 const getJobById = asyncHandler(async (req, res) => {
   const { jobId } = req.params;
 
-  const job = await Job.findById(jobId);
+  // Check if jobId is a valid MongoDB ObjectId (24 hex chars)
+  const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(jobId);
 
-  if (!job) {
-    return ApiResponse.notFound(res, 'Job not found');
+  if (isValidObjectId) {
+    // Query MongoDB Job collection
+    const job = await Job.findById(jobId).populate('employer', 'firstName lastName company.name company.logo');
+
+    if (!job) {
+      return ApiResponse.notFound(res, 'Job not found');
+    }
+
+    // Check if job is active
+    if (!job.isActive || job.isDeleted) {
+      return ApiResponse.notFound(res, 'Job not available');
+    }
+
+    return ApiResponse.success(res, 200, 'Job retrieved successfully', { job });
+  } else {
+    // Assume it's an external job ID (numeric string from Adzuna API)
+    // Query external job service using the aliased function name
+    try {
+      const externalJobs = await fetchExternalJobs({ page: 1, limit: 100 }, ['adzuna', 'findwork', 'remotive', 'arbeitnow']);
+      const externalJob = externalJobs.find(job => job.id === jobId || job._id === jobId);
+
+      if (!externalJob) {
+        return ApiResponse.notFound(res, 'Job not found');
+      }
+
+      return ApiResponse.success(res, 200, 'Job retrieved successfully', { job: externalJob });
+    } catch (error) {
+      console.error('Error fetching external job:', error);
+      return ApiResponse.notFound(res, 'Job not found');
+    }
   }
-
-  // Check if job is active
-  if (!job.isActive || job.isDeleted) {
-    return ApiResponse.notFound(res, 'Job not available');
-  }
-
-  return ApiResponse.success(res, 200, 'Job retrieved successfully', { job });
 });
 
 /**
@@ -199,6 +240,7 @@ const updateJob = asyncHandler(async (req, res) => {
     description,
     location,
     jobType,
+    profession,
     category,
     salary,
     skills,
@@ -215,6 +257,7 @@ const updateJob = asyncHandler(async (req, res) => {
   if (description !== undefined) job.description = description;
   if (location !== undefined) job.location = location;
   if (jobType !== undefined) job.jobType = jobType;
+  if (profession !== undefined) job.profession = profession;
   if (category !== undefined) job.category = category;
   if (salary !== undefined) job.salary = salary;
   if (skills !== undefined) job.skills = skills;
@@ -328,6 +371,7 @@ const getSimilarJobs = asyncHandler(async (req, res) => {
       { skills: { $in: job.skills } },
     ],
   })
+    .populate('employer', 'firstName lastName company.name company.logo')
     .limit(parseInt(limit, 10) || 5);
 
   return ApiResponse.success(res, 200, 'Similar jobs retrieved successfully', {

@@ -43,13 +43,17 @@ const authenticate = async (req, res, next) => {
 
     next();
   } catch (error) {
+    // Log error for debugging but always return 401
+    console.error('Authentication error:', error.message);
+    
     if (error.name === 'JsonWebTokenError') {
-      return ApiResponse.unauthorized(res, 'Invalid token');
+      return ApiResponse.unauthorized(res, 'Invalid or expired token');
     }
     if (error.name === 'TokenExpiredError') {
-      return ApiResponse.unauthorized(res, 'Token expired. Please log in again');
+      return ApiResponse.unauthorized(res, 'Invalid or expired token');
     }
-    return ApiResponse.unauthorized(res, 'Authentication failed');
+    // Catch any other unexpected errors and return 401
+    return ApiResponse.unauthorized(res, 'Invalid or expired token');
   }
 };
 
@@ -76,7 +80,8 @@ const optionalAuth = async (req, res, next) => {
 
     next();
   } catch (error) {
-    // Continue without user if token is invalid
+    // Log error but continue without user if token is invalid
+    console.error('Optional auth error:', error.message);
     next();
   }
 };

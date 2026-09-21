@@ -5,6 +5,7 @@ A comprehensive Node.js/Express backend API for the JobSeek platform with MongoD
 ## 🚀 Features
 
 ### Core Functionality
+
 - ✅ **User Authentication** - Registration, login, logout with JWT tokens
 - ✅ **Email Verification** - OTP-based email verification system
 - ✅ **Job Management** - Full CRUD operations for job postings
@@ -17,6 +18,7 @@ A comprehensive Node.js/Express backend API for the JobSeek platform with MongoD
 - ✅ **Security** - Helmet.js, CORS configuration, secure headers
 
 ### External Job Sources
+
 - **Adzuna** - Requires APP_ID and APP_KEY
 - **Findwork** - Requires API key with Token authentication
 - **Remotive** - Public API (remote jobs)
@@ -26,47 +28,85 @@ A comprehensive Node.js/Express backend API for the JobSeek platform with MongoD
 
 ```
 jobseekBackend/
+├── .env                        # Local environment configuration
+├── .env.example               # Environment variable template
+├── .gitignore                 # Git ignore rules
+├── app.js                     # Express app configuration
+├── server.js                  # Server entry point
+├── package.json               # Dependencies and scripts
+├── package-lock.json          # Locked dependency tree
+├── jest.config.js             # Jest configuration
+├── README.md                  # Project documentation
+├── SECURITY_DATABASE.md       # Database security policy
+├── SECURITY_INCIDENT_RESPONSE.md
+├── SECURITY_PRIORITY.md       # Security priorities and checklist
+├── SECURITY_SECRETS.md        # Secret management guidance
+├── _chat_test.js              # Chat-related probe/test file
+├── _query_probe.js            # Query/debugging probe file
 ├── config/
-│   └── db.js              # MongoDB connection configuration
+│   ├── cloudinary.js          # Cloudinary configuration
+│   └── db.js                 # MongoDB connection configuration
 ├── controllers/
 │   ├── applicationController.js
+│   ├── assessmentController.js
 │   ├── authController.js
+│   ├── chatController.js
 │   ├── externalJobController.js
 │   ├── jobController.js
 │   ├── notificationController.js
 │   └── userController.js
+├── logs/                     # Runtime logs directory
 ├── middleware/
 │   ├── authMiddleware.js      # JWT authentication
-│   ├── errorHandler.js       # Global error handling
-│   ├── otpRateLimit.js       # OTP rate limiting
-│   ├── roleMiddleware.js     # Role-based access control
-│   ├── uploadMiddleware.js   # File upload handling
-│   └── validateRequest.js    # Request validation
+│   ├── errorHandler.js         # Global error handling
+│   ├── otpRateLimit.js         # OTP rate limiting
+│   ├── requestLogger.js        # Request logging middleware
+│   ├── roleMiddleware.js       # Role-based access control
+│   ├── uploadMiddleware.js     # File upload handling
+│   └── validateRequest.js      # Request validation
 ├── models/
 │   ├── Application.js
+│   ├── Assessment.js
+│   ├── AssessmentResult.js
+│   ├── Conversation.js
+│   ├── index.js
 │   ├── Job.js
+│   ├── Message.js
 │   ├── Notification.js
 │   ├── OTP.js
+│   ├── RefreshToken.js
+│   ├── seedAssessment.js
 │   └── User.js
 ├── routes/
 │   ├── applicationRoutes.js
+│   ├── assessmentRoutes.js
 │   ├── authRoutes.js
+│   ├── chatRoutes.js
 │   ├── externalJobRoutes.js
 │   ├── jobs.js
 │   ├── notificationRoutes.js
 │   ├── otp.js
 │   └── userRoutes.js
 ├── services/
-│   ├── emailService.js       # Email sending (Nodemailer)
-│   ├── jobSourcingService.js # External job aggregation
-│   ├── otpService.js         # OTP generation and verification
-│   └── uploadService.js      # Cloudinary file uploads
+│   ├── cleanupService.js
+│   ├── emailService.js         # Email sending (Nodemailer)
+│   ├── jobSourcingService.js   # External job aggregation
+│   ├── otpService.js           # OTP generation and verification
+│   ├── queueService.js
+│   ├── storageService.js
+│   ├── uploadService.js        # Cloudinary file uploads
+│   └── ...
+├── tests/
+│   ├── auth.test.js
+│   └── setup.js
 ├── utils/
-│   └── (utility functions)
-├── app.js                    # Express app configuration
-├── server.js                 # Server entry point
-├── .env.example              # Environment variables template
-└── package.json              # Dependencies
+│   ├── apiResponse.js
+│   ├── asyncHandler.js
+│   ├── cache.js
+│   ├── generateToken.js
+│   ├── logger.js
+│   └── validators.js
+└── node_modules/             # Installed project dependencies
 ```
 
 ## 🛠️ Tech Stack
@@ -84,6 +124,7 @@ jobseekBackend/
 ## 📋 API Endpoints
 
 ### Authentication
+
 - `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - Login user
 - `POST /api/auth/logout` - Logout user
@@ -94,6 +135,7 @@ jobseekBackend/
 - `POST /api/auth/verify-email` - Verify email with OTP
 
 ### Jobs (Platform)
+
 - `POST /api/jobs` - Create job (employer only)
 - `GET /api/jobs` - Get all jobs (with filters)
 - `GET /api/jobs/:id` - Get single job
@@ -101,6 +143,7 @@ jobseekBackend/
 - `DELETE /api/jobs/:id` - Delete job (employer only)
 
 ### External Jobs
+
 - `GET /api/external-jobs/aggregate` - Aggregate jobs from all external sources
 - `GET /api/external-jobs/all` - Get flattened list of all external jobs
 - `GET /api/external-jobs/:source` - Get jobs from specific source
@@ -108,6 +151,7 @@ jobseekBackend/
 - `GET /api/external-jobs/categories` - Get job categories
 
 ### Applications
+
 - `POST /api/applications` - Apply to a job
 - `GET /api/applications` - Get user's applications
 - `GET /api/applications/:id` - Get single application
@@ -115,23 +159,27 @@ jobseekBackend/
 - `DELETE /api/applications/:id` - Withdraw application
 
 ### Users
+
 - `GET /api/users/profile` - Get user profile
 - `PUT /api/users/profile` - Update profile
 - `POST /api/users/upload` - Upload profile picture
 - `GET /api/users/:id` - Get user by ID
 
 ### Notifications
+
 - `GET /api/notifications` - Get user notifications
 - `PUT /api/notifications/:id/read` - Mark as read
 - `PUT /api/notifications/read-all` - Mark all as read
 - `DELETE /api/notifications/:id` - Delete notification
 
 ### OTP
+
 - `POST /api/otp/send` - Send OTP (email/SMS)
 - `POST /api/otp/verify` - Verify OTP
 - `POST /api/otp/resend` - Resend OTP
 
 ### Health
+
 - `GET /health` - Health check
 - `GET /` - API info and endpoints
 
@@ -161,6 +209,7 @@ cp .env.example .env
 Update the following variables in your `.env` file:
 
 #### Required Variables
+
 ```env
 PORT=5000
 NODE_ENV=development
@@ -170,6 +219,7 @@ FRONTEND_URL=http://localhost:5174
 ```
 
 #### Optional Variables (Email)
+
 ```env
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
@@ -180,6 +230,7 @@ EMAIL_FROM=JobSeek <noreply@jobseek.com>
 ```
 
 #### Optional Variables (Cloudinary)
+
 ```env
 CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
 CLOUDINARY_API_KEY=your_cloudinary_api_key
@@ -187,6 +238,7 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 ```
 
 #### Optional Variables (External Job APIs)
+
 ```env
 ADZUNA_APP_ID=your_adzuna_app_id
 ADZUNA_APP_KEY=your_adzuna_app_key
@@ -249,6 +301,7 @@ The server will run on `http://localhost:5000`
 ### Other Platforms
 
 The backend can be deployed to any Node.js hosting platform:
+
 - Heroku
 - Railway
 - DigitalOcean App Platform
@@ -258,6 +311,7 @@ The backend can be deployed to any Node.js hosting platform:
 ## 📊 Database Models
 
 ### User
+
 - name, email, password (hashed)
 - role (jobseeker, employer, admin)
 - profile picture, resume
@@ -265,6 +319,7 @@ The backend can be deployed to any Node.js hosting platform:
 - isEmailVerified
 
 ### Job
+
 - title, description, category
 - location, jobType (full-time, part-time, contract, remote)
 - salary range, budget
@@ -273,18 +328,21 @@ The backend can be deployed to any Node.js hosting platform:
 - status (active, closed, draft)
 
 ### Application
+
 - job (reference), applicant (reference)
 - status (pending, reviewed, accepted, rejected)
 - cover letter, resume
 - appliedAt, updatedAt
 
 ### Notification
+
 - recipient (reference to User)
 - type (application, job, system)
 - title, message
 - isRead, createdAt
 
 ### OTP
+
 - email/phone, code
 - purpose (registration, login, password_reset, email_verification)
 - expiresAt, used
@@ -307,20 +365,24 @@ curl -X POST http://localhost:5000/api/auth/register \
 ## 🐛 Troubleshooting
 
 ### MongoDB Connection Issues
+
 - Verify your MongoDB Atlas connection string
 - Check that your IP is whitelisted in MongoDB Atlas
 - Ensure your database user has the correct permissions
 - Check for the `MONGODB_URI` typo (should not have duplicate prefix)
 
 ### CORS Errors
+
 - Verify `FRONTEND_URL` matches your frontend URL exactly
 - Check that the frontend is making requests to the correct backend URL
 
 ### Port Already in Use
+
 - Change the `PORT` in your `.env` file
 - Or stop the process using port 5000
 
 ### External Jobs Not Loading
+
 - Verify API keys are set in `.env`
 - Check backend logs for API errors
 - Ensure external APIs are accessible

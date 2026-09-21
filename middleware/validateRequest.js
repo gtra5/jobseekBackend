@@ -6,6 +6,7 @@
 const { validationResult, body, param, query } = require('express-validator');
 const ApiResponse = require('../utils/apiResponse');
 const { validateEmail, validatePassword, validateName } = require('../utils/validators');
+const PROFESSIONS = require('../constants/professions');
 
 /**
  * Middleware to check validation results
@@ -66,8 +67,8 @@ const commonValidators = {
   phone: () => body('phone')
     .optional()
     .trim()
-    .isMobilePhone()
-    .withMessage('Please provide a valid phone number'),
+    .matches(/^\+[1-9]\d{7,14}$/)
+    .withMessage('Phone must be in international format, e.g. +2348012345678'),
   
   mongoId: (paramName) => param(paramName)
     .notEmpty()
@@ -249,15 +250,21 @@ const jobValidators = {
     body('jobType')
       .notEmpty()
       .withMessage('Job type is required')
-      .isIn(['Full-time', 'Part-time', 'Contract', 'Remote', 'Hybrid'])
+      .isIn(['Full-time', 'Part-time', 'Contract', 'Internship', 'Remote', 'Hybrid'])
       .withMessage('Invalid job type'),
-    body('category')
+body('category')
       .trim()
       .notEmpty()
       .withMessage('Category is required'),
+    body('profession')
+      .trim()
+      .notEmpty()
+      .withMessage('Profession is required')
+      .isIn(PROFESSIONS)
+      .withMessage('Invalid profession'),
     validate,
   ],
-  
+
   updateJob: [
     param('jobId')
       .notEmpty()
@@ -274,13 +281,17 @@ const jobValidators = {
       .trim()
       .isLength({ min: 50 })
       .withMessage('Description must be at least 50 characters'),
-    body('jobType')
+body('jobType')
       .optional()
-      .isIn(['Full-time', 'Part-time', 'Contract', 'Remote', 'Hybrid'])
+      .isIn(['Full-time', 'Part-time', 'Contract', 'Internship', 'Remote', 'Hybrid'])
       .withMessage('Invalid job type'),
+    body('profession')
+      .optional()
+      .isIn(PROFESSIONS)
+      .withMessage('Invalid profession'),
     validate,
   ],
-  
+
   getJob: [
     param('jobId')
       .notEmpty()
@@ -299,9 +310,12 @@ const jobValidators = {
       .trim(),
     query('jobType')
       .optional()
-      .isIn(['Full-time', 'Part-time', 'Contract', 'Remote', 'Hybrid'])
+      .isIn(['Full-time', 'Part-time', 'Contract', 'Internship', 'Remote', 'Hybrid'])
       .withMessage('Invalid job type'),
     query('category')
+      .optional()
+      .trim(),
+    query('professions')
       .optional()
       .trim(),
     query('minSalary')

@@ -6,6 +6,7 @@
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const PROFESSIONS = require('../constants/professions');
 
 const userSchema = new mongoose.Schema(
   {
@@ -36,6 +37,13 @@ const userSchema = new mongoose.Schema(
     isEmailVerified: {
       type: Boolean,
       default: false,
+    },
+    // Professions/interests the user picks in profile settings — used to
+    // personalize their default job feed in BrowseJobs.
+    professions: {
+      type: [String],
+      enum: PROFESSIONS,
+      default: [],
     },
     // Profile fields for all users
     firstName: {
@@ -92,6 +100,21 @@ const userSchema = new mongoose.Schema(
         publicId: String,
         uploadedAt: Date,
       },
+      primaryCategory: {
+        type: String,
+        enum: [
+          'Web Development',
+          'Mobile Development',
+          'UI/UX Design',
+          'Data Science',
+          'DevOps',
+          'Cybersecurity',
+          'Cloud Computing',
+          'AI/ML',
+          'Other',
+        ],
+        default: null,
+      },
       preferredJobTypes: [
         {
           type: String,
@@ -107,6 +130,15 @@ const userSchema = new mongoose.Schema(
       portfolioUrl: String,
       linkedinUrl: String,
       githubUrl: String,
+      // Verified competency results from skill assessments
+      verifiedSkills: [
+        {
+          skill: { type: String, trim: true },
+          score: { type: Number, default: 0, min: 0, max: 100 },
+          passed: { type: Boolean, default: false },
+          verifiedAt: { type: Date },
+        },
+      ],
     },
     // Employer specific fields
     company: {
@@ -160,6 +192,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -169,6 +205,7 @@ const userSchema = new mongoose.Schema(
 // Index for faster queries
 userSchema.index({ role: 1 });
 userSchema.index({ isVerified: 1 });
+userSchema.index({ 'profile.verifiedSkills.skill': 1 });
 
 /**
  * Hash password before saving.

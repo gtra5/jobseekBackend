@@ -17,7 +17,10 @@ const jobRoutes = require('./routes/jobs');
 const applicationRoutes = require('./routes/applicationRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const externalJobRoutes = require('./routes/externalJobRoutes');
-const otpRoutes = require('./routes/otp');
+const professionRoutes = require('./routes/professionRoutes');
+const skillsRoutes = require('./routes/skillsRoutes');
+const assessmentRoutes = require('./routes/assessmentRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 
 const app = express();
 
@@ -120,6 +123,18 @@ app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
 
+// Stricter rate limiting for external job sourcing.
+// Every request fans out to third-party APIs (Adzuna, Findwork, Remotive,
+// Arbeitnow), so it's far more expensive than a normal DB lookup.
+const externalJobsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'development' ? 200 : 30,
+  message: 'Too many external job requests, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/external-jobs', externalJobsLimiter);
+
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -127,7 +142,10 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/external-jobs', externalJobRoutes);
-app.use('/api/otp', otpRoutes);
+app.use('/api/professions', professionRoutes);
+app.use('/api/skills', skillsRoutes);
+app.use('/api/assessments', assessmentRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -136,39 +154,6 @@ app.get('/health', (req, res) => {
     message: 'Server is running',
     timestamp: new Date().toISOString(),
   });
-});
-
-// Environment config check — shows which critical vars are SET vs MISSING.
-// Never exposes actual values. Remove this route once production is confirmed working.
-app.get('/debug-env', (req, res) => {
-  const vars = [
-    'NODE_ENV',
-    'FRONTEND_URL',
-    'JWT_SECRET',
-    'JWT_REFRESH_SECRET',
-    'EMAIL_USER',
-    'EMAIL_PASS',
-    'MONGODB_URI',
-  ];
-
-  const status = {};
-  for (const v of vars) {
-    const val = process.env[v];
-    if (!val) {
-      status[v] = '❌ MISSING';
-    } else if (
-      val.includes('your_super_secret') ||
-      val.includes('change_this') ||
-      val.includes('<') // placeholder like <username>
-    ) {
-      status[v] = '⚠️  PLACEHOLDER (not a real value)';
-    } else {
-      // Show only first 4 chars so you can confirm it's the right var without exposing it
-      status[v] = `✅ SET (starts with: ${val.substring(0, 4)}...)`;
-    }
-  }
-
-  res.json({ configCheck: status });
 });
 
 // Root endpoint
@@ -184,7 +169,7 @@ app.get('/', (req, res) => {
       applications: '/api/applications',
       notifications: '/api/notifications',
       externalJobs: '/api/external-jobs',
-      otp: '/api/otp',
+      assessments: '/api/assessments',
     },
   });
 });

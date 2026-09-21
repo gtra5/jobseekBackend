@@ -226,6 +226,37 @@ class OTPService {
   }
 
   /**
+   * Persist a new OTP and detach its delivery.
+   * The durable part — deleting any older unverified OTP for this email/purpose
+   * and inserting the new record — is awaited, so a response built on this
+   * promise can only be sent once the newest verification record is safely in
+   * the DB. Registration/resend paths use this so a later /resend-otp always
+   * finds and replaces a real, persisted record and can never invalidate an
+   * OTP that registration is still mid-write.
+   *
+   * SMTP delivery is detached: a slow or failing mail server no longer holds
+   * the HTTP response hostage, and a delivery attempt can never race the next
+   * createOTP's deleteMany + insert. Delivery errors are logged here.
+   *
+   * @param {string} email       - Recipient email address
+   * @param {string} purpose     - OTP purpose
+   * @param {string} [ip]        - Request IP address (for audit logging)
+   * @param {Object} [pendingData] - Data to persist alongside the OTP
+   * @returns {Promise<string>} The plain-text OTP (already persisted)
+   */
+  async persistAndSendOTP(email, purpose, ip, pendingData = null) {
+    const otp = await this.createOTP(email, purpose, pendingData);
+
+    this.sendOTP(email, otp, purpose).catch((error) => {
+      console.error(`[OTP] Failed to deliver ${purpose} code to ${email}:`, error.message);
+    });
+
+    logAuthEvent.otpRequested(email, purpose, ip);
+
+    return otp;
+  }
+
+  /**
    * Clean up expired OTPs (call periodically if needed)
    */
   async cleanupExpiredOTPs() {

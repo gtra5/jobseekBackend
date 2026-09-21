@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const PROFESSIONS = require('../constants/professions');
 
 const jobSchema = new mongoose.Schema(
   {
@@ -29,6 +30,14 @@ const jobSchema = new mongoose.Schema(
         values: ['Full-time', 'Part-time', 'Contract', 'Internship', 'Remote', 'Hybrid'],
         message: '{VALUE} is not a valid job type',
       },
+    },
+    profession: {
+      type: String,
+      enum: {
+        values: PROFESSIONS,
+        message: '{VALUE} is not a valid profession',
+      },
+      required: [true, 'Profession is required'],
     },
     category: {
       type: String,
@@ -103,14 +112,14 @@ const jobSchema = new mongoose.Schema(
 // Ensure salary.max is not less than salary.min when both are provided.
 // Individual non-negative checks on min/max stay as field-level validators above;
 // bounds that are missing are left untouched (no cross-field check fires).
-jobSchema.pre('validate', function (next) {
+// Zero-parameter pre hooks run synchronously and complete automatically when the
+// function returns — no next() call needed or wanted here.
+jobSchema.pre('validate', function () {
   const salary = this.salary || {};
   if (salary.min != null && salary.max != null && salary.max < salary.min) {
     this.invalidate('salary.max', 'salary.max must be greater than or equal to salary.min');
   }
-  next();
 });
-
 // Index for better search performance
 jobSchema.index({ title: 'text', description: 'text', skills: 'text' });
 jobSchema.index({ category: 1 });

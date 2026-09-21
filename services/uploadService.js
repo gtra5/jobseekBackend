@@ -1,46 +1,61 @@
 /**
  * Upload Service
- * Handles file uploads to Cloudinary
+ * Handles file uploads to AWS S3 using presigned URLs
  */
 
-const { uploadToCloudinary, deleteFromCloudinary } = require('../config/cloudinary');
+const { generatePresignedUploadUrl, generatePresignedAccessUrl, deleteFile, BUCKET_NAME } = require('../config/storage');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 /**
- * Upload resume
- * @param {string} filePath - Local file path
- * @returns {Promise<Object>} Upload result with URL and public ID
+ * Generate unique file key
+ * @param {string} originalName - Original file name
+ * @param {string} folder - Folder name (resumes, logos, avatars)
+ * @returns {string} Unique file key
  */
-const uploadResume = async (filePath) => {
-  return await uploadToCloudinary(filePath, 'resumes');
+const generateFileKey = (originalName, folder) => {
+  const timestamp = Date.now();
+  const randomString = crypto.randomBytes(8).toString('hex');
+  const sanitizedName = originalName.replace(/[^a-zA-Z0-9.-]/g, '_');
+  return `${folder}/${timestamp}-${randomString}-${sanitizedName}`;
 };
 
 /**
- * Upload company logo
- * @param {string} filePath - Local file path
- * @returns {Promise<Object>} Upload result with URL and public ID
+ * Generate presigned upload URL for a file
+ * @param {string} originalName - Original file name
+ * @param {string} contentType - MIME type
+ * @param {string} folder - Folder name (resumes, logos, avatars)
+ * @returns {Promise<{uploadUrl: string, fileKey: string}>}
  */
-const uploadLogo = async (filePath) => {
-  return await uploadToCloudinary(filePath, 'company-logos');
+const generateUploadUrl = async (originalName, contentType, folder = 'uploads') => {
+  const fileKey = generateFileKey(originalName, folder);
+  const uploadUrl = await generatePresignedUploadUrl(fileKey, contentType);
+  
+  return {
+    uploadUrl,
+    fileKey,
+    publicUrl: `https://${BUCKET_NAME}.s3.amazonaws.com/${fileKey}`
+  };
 };
 
 /**
- * Upload avatar
- * @param {string} filePath - Local file path
- * @returns {Promise<Object>} Upload result with URL and public ID
+ * Generate presigned access URL for a file
+ * @param {string} fileKey - File key in bucket
+ * @param {number} expiresIn - URL expiration time in seconds (default: 3600)
+ * @returns {Promise<string>} Presigned access URL
  */
-const uploadAvatar = async (filePath) => {
-  return await uploadToCloudinary(filePath, 'avatars');
+const generateAccessUrl = async (fileKey, expiresIn = 3600) => {
+  return await generatePresignedAccessUrl(fileKey, expiresIn);
 };
 
 /**
- * Delete file from Cloudinary
- * @param {string} publicId - Cloudinary public ID
- * @returns {Promise<Object>} Deletion result
+ * Delete file from S3
+ * @param {string} fileKey - File key in bucket
+ * @returns {Promise<void>}
  */
-const deleteFile = async (publicId) => {
-  return await deleteFromCloudinary(publicId);
+const deleteFileByKey = async (fileKey) => {
+  return await deleteFile(fileKey);
 };
 
 /**
@@ -59,41 +74,25 @@ const cleanupLocalFile = (filePath) => {
 };
 
 /**
- * Upload file and clean up local copy
- * @param {string} filePath - Local file path
- * @param {string} type - Upload type (resume, logo, avatar)
- * @returns {Promise<Object>} Upload result
+ * Upload file using presigned URL (for direct browser uploads)
+ * @param {string} originalName - Original file name
+ * @param {string} contentType - MIME type
+ * @param {string} folder - Folder name (resumes, logos, avatars)
+ * @returns {Promise<{uploadUrl: string, fileKey: string, publicUrl: string}>}
  */
-const uploadAndCleanup = async (filePath, type) => {
+const uploadAndCleanup = async (originalName, contentType, folder = 'uploads') => {
   try {
-    let result;
-    switch (type) {
-      case 'resume':
-        result = await uploadResume(filePath);
-        break;
-      case 'logo':
-        result = await uploadLogo(filePath);
-        break;
-      case 'avatar':
-        result = await uploadAvatar(filePath);
-        break;
-      default:
-        throw new Error('Invalid upload type');
-    }
-
-    cleanupLocalFile(filePath);
+    const result = await generateUploadUrl(originalName, contentType, folder);
     return result;
   } catch (error) {
-    cleanupLocalFile(filePath);
     throw error;
   }
 };
 
 module.exports = {
-  uploadResume,
-  uploadLogo,
-  uploadAvatar,
-  deleteFile,
+  generateUploadUrl,
+  generateAccessUrl,
+  deleteFileByKey,
   cleanupLocalFile,
   uploadAndCleanup,
 };

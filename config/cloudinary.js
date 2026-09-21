@@ -72,9 +72,36 @@ const uploadToCloudinary = async (filePath, folder) => {
   }
 };
 
+/**
+ * Upload an in-memory Buffer to Cloudinary.
+ * Used with multer memory storage so we avoid the old
+ * multer-storage-cloudinary engine, which hangs on this stack.
+ * @param {Buffer} buffer - File contents already in memory
+ * @param {string} folder - Cloudinary folder (e.g. 'avatars', 'resumes')
+ * @param {string} [resourceType='auto'] - 'image' | 'raw' | 'auto'; resumes are raw
+ * @param {Object} [options] - Extra upload options (e.g. allowed_formats)
+ * @returns {Promise<{url: string, publicId: string}>}
+ */
+const uploadBufferToCloudinary = (buffer, folder, resourceType = 'auto', options = {}) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: resourceType, ...options },
+      (error, result) => {
+        if (error) {
+          console.error(`Error uploading buffer to Cloudinary: ${error.message}`);
+          return reject(error);
+        }
+        resolve({ url: result.secure_url, publicId: result.public_id });
+      }
+    );
+    stream.end(buffer);
+  });
+};
+
 module.exports = {
   cloudinary,
   createCloudinaryStorage,
   deleteFromCloudinary,
   uploadToCloudinary,
+  uploadBufferToCloudinary,
 };

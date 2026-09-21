@@ -4,28 +4,12 @@
  */
 
 const multer = require('multer');
-const { createCloudinaryStorage } = require('../config/cloudinary');
 const ApiResponse = require('../utils/apiResponse');
 
 /**
- * Configure memory storage for S3/R2 uploads
+ * Configure memory storage for S3/R2 / manual Cloudinary uploads
  */
 const memoryStorage = multer.memoryStorage();
-
-/**
- * Configure storage for resume uploads
- */
-const resumeStorage = createCloudinaryStorage('resumes');
-
-/**
- * Configure storage for company logo uploads
- */
-const logoStorage = createCloudinaryStorage('company-logos');
-
-/**
- * Configure storage for avatar uploads
- */
-const avatarStorage = createCloudinaryStorage('avatars');
 
 /**
  * File filter to allow only specific file types
@@ -48,50 +32,21 @@ const getFileFilter = (type) => {
 };
 
 /**
- * Multer upload configuration for memory storage (S3/R2)
+ * Multer upload configuration for memory storage (S3/R2 / manual Cloudinary).
+ * Files are held in memory, then uploaded to Cloudinary in the controller via
+ * uploadBufferToCloudinary (the old multer-storage-cloudinary engine hangs on
+ * this stack, so it is no longer used).
  */
 const uploadToMemory = (type) => {
+  const limit = type === 'resume' ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
   return multer({
     storage: memoryStorage,
     fileFilter: getFileFilter(type),
     limits: {
-      fileSize: 5 * 1024 * 1024, // 5MB limit
+      fileSize: limit, // resumes up to 20MB, images 5MB
     },
   });
 };
-
-/**
- * Multer upload configuration for resumes (Cloudinary)
- */
-const uploadResume = multer({
-  storage: resumeStorage,
-  fileFilter: getFileFilter('resume'),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-}).single('resume');
-
-/**
- * Multer upload configuration for company logos (Cloudinary)
- */
-const uploadLogo = multer({
-  storage: logoStorage,
-  fileFilter: getFileFilter('logo'),
-  limits: {
-    fileSize: 2 * 1024 * 1024, // 2MB limit
-  },
-}).single('logo');
-
-/**
- * Multer upload configuration for avatars (Cloudinary)
- */
-const uploadAvatar = multer({
-  storage: avatarStorage,
-  fileFilter: getFileFilter('avatar'),
-  limits: {
-    fileSize: 2 * 1024 * 1024, // 2MB limit
-  },
-}).single('avatar');
 
 /**
  * Wrapper to handle Multer errors
@@ -119,40 +74,25 @@ const handleUpload = (uploadFunction) => {
 };
 
 /**
- * Middleware to handle resume upload to memory (for S3/R2)
+ * Middleware to handle resume upload to memory
  */
 const handleResumeUploadMemory = handleUpload(uploadToMemory('resume').single('resume'));
 
 /**
- * Middleware to handle logo upload to memory (for S3/R2)
+ * Middleware to handle logo upload to memory
  */
 const handleLogoUploadMemory = handleUpload(uploadToMemory('logo').single('logo'));
 
 /**
- * Middleware to handle avatar upload to memory (for S3/R2)
+ * Middleware to handle avatar upload to memory
  */
 const handleAvatarUploadMemory = handleUpload(uploadToMemory('avatar').single('avatar'));
 
-/**
- * Middleware to handle resume upload (Cloudinary)
- */
-const handleResumeUpload = handleUpload(uploadResume);
-
-/**
- * Middleware to handle logo upload (Cloudinary)
- */
-const handleLogoUpload = handleUpload(uploadLogo);
-
-/**
- * Middleware to handle avatar upload (Cloudinary)
- */
-const handleAvatarUpload = handleUpload(uploadAvatar);
-
 module.exports = {
-  handleResumeUpload,
-  handleLogoUpload,
-  handleAvatarUpload,
+  handleAvatarUpload: handleAvatarUploadMemory,
+  handleResumeUpload: handleResumeUploadMemory,
+  handleLogoUpload: handleLogoUploadMemory,
+  handleAvatarUploadMemory,
   handleResumeUploadMemory,
   handleLogoUploadMemory,
-  handleAvatarUploadMemory,
 };

@@ -34,7 +34,9 @@ const verifyToken = (token, secret = process.env.JWT_SECRET) => {
   try {
     return jwt.verify(token, secret);
   } catch (error) {
-    throw new Error('Invalid or expired token');
+    // Re-throw the original JWT error so errorHandler can branch on
+    // error.name === 'JsonWebTokenError' | 'TokenExpiredError'
+    throw error;
   }
 };
 
