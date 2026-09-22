@@ -13,17 +13,17 @@ const { validate, commonValidators } = require('../middleware/validateRequest');
 
 /**
  * @route   GET /api/users/:id
- * @desc    Get user by ID (authenticated — own use)
- * @access  Public
+ * @desc    Get job seeker profile by ID (employer only)
+ * @access  Private (Employer only)
  */
-router.get('/:id', userController.getUserById);
+router.get('/:id', authenticate, isEmployer, userController.getUserById);
 
 /**
  * @route   GET /api/users/:id/public
  * @desc    Get a sanitised public profile safe to show any authenticated viewer
  * @access  Private (any authenticated user)
  */
-router.get('/:id/public', authenticate, userController.getPublicProfile);
+router.get('/:id/public', userController.getPublicProfile);
 
 /**
  * @route   PATCH /api/users/me/professions

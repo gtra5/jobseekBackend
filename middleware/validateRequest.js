@@ -189,12 +189,29 @@ const authValidators = {
   ],
   
   resetPassword: [
-    body('token')
+    body('email')
+      .trim()
       .notEmpty()
-      .withMessage('Token is required'),
-    body('password')
+      .withMessage('Email is required')
+      .isEmail()
+      .withMessage('Please provide a valid email')
+      .normalizeEmail()
+      .custom((value) => {
+        if (!validateEmail(value)) {
+          throw new Error('Invalid email format');
+        }
+        return true;
+      }),
+    body('otp')
       .notEmpty()
-      .withMessage('Password is required')
+      .withMessage('OTP is required')
+      .isLength({ min: 6, max: 6 })
+      .withMessage('OTP must be 6 digits')
+      .isNumeric()
+      .withMessage('OTP must contain only numbers'),
+    body('newPassword')
+      .notEmpty()
+      .withMessage('New password is required')
       .isLength({ min: 8 })
       .withMessage('Password must be at least 8 characters')
       .custom((value) => {

@@ -12,13 +12,20 @@ const { purgeUser } = require('../services/cleanupService');
 
 /**
  * GET /api/users/:id
- * Get user by ID — authenticated, returns full (non-sensitive) document.
- * Only used internally (e.g. the current user fetching their own data).
+ * Get job seeker profile by ID (employer only).
+ * Returns employer-safe profile data excluding sensitive information.
  */
 const getUserById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const user = await User.findById(id).select('-password');
+  // Find user and verify they are a jobseeker
+  const user = await User.findOne({ _id: id, role: 'jobseeker' }).select(
+    'firstName lastName avatar role professions ' +
+    'profile.headline profile.skills profile.experience profile.education ' +
+    'profile.portfolioUrl profile.linkedinUrl profile.githubUrl ' +
+    'profile.preferredJobTypes profile.primaryCategory profile.preferredLocations ' +
+    'profile.verifiedSkills'
+  );
 
   if (!user) {
     return ApiResponse.notFound(res, 'User not found');
@@ -48,8 +55,7 @@ const getPublicProfile = asyncHandler(async (req, res) => {
     'profile.headline profile.skills profile.verifiedSkills ' +
     'profile.portfolioUrl profile.linkedinUrl profile.githubUrl ' +
     'profile.preferredJobTypes profile.primaryCategory ' +
-    'company.name company.logo company.industry company.website ' +
-    'createdAt'
+    'company.name company.logo company.industry company.website'
   );
 
   if (!user) {
