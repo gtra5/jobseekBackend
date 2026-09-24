@@ -12,47 +12,40 @@ const ApiResponse = require('../utils/apiResponse');
  */
 const authenticate = async (req, res, next) => {
   try {
-    // Get token from header
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return ApiResponse.unauthorized(res, 'No token provided. Please log in.');
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-
-    // Verify token
+    const token = authHeader.substring(7);
     const decoded = verifyToken(token);
 
-    // Check if user still exists
     const user = await User.findById(decoded.id).select('-password');
-    
+
     if (!user) {
       return ApiResponse.unauthorized(res, 'User no longer exists');
     }
 
-    // Check if user is active
     if (!user.isActive || user.isDeleted) {
       return ApiResponse.unauthorized(res, 'User account is inactive or deleted');
     }
 
     // Attach user to request
     req.user = user;
-    req.userId = user._id;
+    req.userId = user._id.toString(); // normalize to string — controllers compare this against .toString() values
     req.userRole = user.role;
 
     next();
   } catch (error) {
-    // Log error for debugging but always return 401
     console.error('Authentication error:', error.message);
-    
+
     if (error.name === 'JsonWebTokenError') {
       return ApiResponse.unauthorized(res, 'Invalid or expired token');
     }
     if (error.name === 'TokenExpiredError') {
       return ApiResponse.unauthorized(res, 'Invalid or expired token');
     }
-    // Catch any other unexpected errors and return 401
     return ApiResponse.unauthorized(res, 'Invalid or expired token');
   }
 };
@@ -63,7 +56,7 @@ const authenticate = async (req, res, next) => {
 const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return next();
     }
@@ -74,13 +67,12 @@ const optionalAuth = async (req, res, next) => {
 
     if (user && user.isActive && !user.isDeleted) {
       req.user = user;
-      req.userId = user._id;
+      req.userId = user._id.toString(); // same normalization here
       req.userRole = user.role;
     }
 
     next();
   } catch (error) {
-    // Log error but continue without user if token is invalid
     console.error('Optional auth error:', error.message);
     next();
   }

@@ -107,21 +107,26 @@ const initializeSocket = (server) => {
     });
 
     // Send message
-    socket.on('send_message', async (data) => {
+    // `callback` is the Socket.IO ack (see emitWithAck on the client) —
+    // optional, since other emitters of this event may not pass one.
+    socket.on('send_message', async (data, callback) => {
+      const ack = typeof callback === 'function' ? callback : () => {};
       try {
-        const { conversationId, content } = data;
+        const { conversationId, content } = data || {};
 
         // Validate input
         if (!conversationId || !content || content.trim().length === 0) {
-          socket.emit('error', { message: 'Invalid message data' });
-          return;
+          const errMsg = 'Invalid message data';
+          socket.emit('error', { message: errMsg });
+          return ack({ success: false, error: errMsg });
         }
 
         // Verify conversation exists and user is participant
         const conversation = await Conversation.findById(conversationId);
         if (!conversation) {
-          socket.emit('error', { message: 'Conversation not found' });
-          return;
+          const errMsg = 'Conversation not found';
+          socket.emit('error', { message: errMsg });
+          return ack({ success: false, error: errMsg });
         }
 
         const isParticipant = conversation.participants.some(
@@ -129,8 +134,9 @@ const initializeSocket = (server) => {
         );
 
         if (!isParticipant) {
-          socket.emit('error', { message: 'Not authorized to send message' });
-          return;
+          const errMsg = 'Not authorized to send message';
+          socket.emit('error', { message: errMsg });
+          return ack({ success: false, error: errMsg });
         }
 
         // Create message
@@ -151,8 +157,19 @@ const initializeSocket = (server) => {
         // Populate message with sender info
         await message.populate('sender', 'firstName lastName avatar');
 
+        // Flat payload — matches the shape chatController.js's REST
+        // sendMessage returns, so the client treats both paths identically.
+        const messagePayload = {
+          id: message._id,
+          conversation: message.conversation,
+          sender: message.sender,
+          content: message.content,
+          readBy: message.readBy,
+          createdAt: message.createdAt,
+        };
+
         // Broadcast to conversation room
-        io.to(conversationId).emit('new_message', message);
+        io.to(conversationId).emit('new_message', messagePayload);
 
         // Send notification to other participants
         const otherParticipants = conversation.participants.filter(
@@ -169,9 +186,12 @@ const initializeSocket = (server) => {
         });
 
         logger.info(`Message sent in conversation ${conversationId} by user ${socket.userId}`);
+
+        ack({ success: true, message: messagePayload });
       } catch (error) {
         logger.error(`Error sending message: ${error.message}`);
         socket.emit('error', { message: 'Failed to send message' });
+        ack({ success: false, error: 'Failed to send message' });
       }
     });
 

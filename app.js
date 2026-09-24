@@ -102,7 +102,7 @@ app.use((req, res, next) => {
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === 'development' ? 2000 : 100, // generous in dev, unchanged in prod
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -134,6 +134,21 @@ const externalJobsLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api/external-jobs', externalJobsLimiter);
+
+// Looser rate limiting for chat and notifications.
+// Now that messages are pushed over Socket.io rather than polled, this
+// mainly needs headroom for normal page interaction — but it keeps these
+// routes on their own budget so they can never starve, or be starved by,
+// unrelated endpoints sharing the global limiter.
+const realtimeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'development' ? 500 : 300,
+  message: 'Too many requests, please slow down.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/chat', realtimeLimiter);
+app.use('/api/notifications', realtimeLimiter);
 
 // API Routes
 app.use('/api/auth', authRoutes);

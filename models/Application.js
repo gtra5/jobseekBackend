@@ -27,25 +27,21 @@ const applicationSchema = new mongoose.Schema(
       enum: ['pending', 'reviewed', 'shortlisted', 'interview', 'offered', 'rejected', 'withdrawn', 'hired'],
       default: 'pending',
     },
-    // Application cover letter/message
     coverLetter: {
       type: String,
       trim: true,
       maxlength: [2000, 'Cover letter cannot exceed 2000 characters'],
     },
-    // Resume snapshot at time of application
     resumeSnapshot: {
       url: String,
       publicId: String,
     },
-    // Additional answers to job-specific questions
     answers: [
       {
         question: String,
         answer: String,
       },
     ],
-    // Application metadata
     appliedAt: {
       type: Date,
       default: Date.now,
@@ -54,11 +50,10 @@ const applicationSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-    // Interview scheduling
     interviews: [
       {
         scheduledAt: Date,
-        duration: Number, // in minutes
+        duration: Number,
         type: {
           type: String,
           enum: ['phone', 'video', 'in-person'],
@@ -74,19 +69,16 @@ const applicationSchema = new mongoose.Schema(
         feedback: String,
       },
     ],
-    // Employer notes (internal)
     employerNotes: {
       type: String,
       trim: true,
     },
-    // Rating by employer (1-5)
     rating: {
       type: Number,
       min: 1,
       max: 5,
       default: null,
     },
-    // External job tracking (for aggregated jobs)
     isExternalJob: {
       type: Boolean,
       default: false,
@@ -99,7 +91,6 @@ const applicationSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    // Withdrawal reason
     withdrawalReason: {
       type: String,
       trim: true,
@@ -126,7 +117,7 @@ applicationSchema.index({ job: 1, jobSeeker: 1 }, { unique: true }); // One appl
 /**
  * Prevent duplicate applications
  */
-applicationSchema.pre('save', async function (next) {
+applicationSchema.pre('save', async function () {
   if (this.isNew) {
     const existingApplication = await this.constructor.findOne({
       job: this.job,
@@ -136,20 +127,18 @@ applicationSchema.pre('save', async function (next) {
     if (existingApplication) {
       const error = new Error('You have already applied to this job');
       error.name = 'ValidationError';
-      return next(error);
+      throw error;
     }
   }
-  next();
 });
 
 /**
  * Update reviewedAt when status changes from pending
  */
-applicationSchema.pre('save', function (next) {
+applicationSchema.pre('save', function () {
   if (this.isModified('status') && this.status !== 'pending' && !this.reviewedAt) {
     this.reviewedAt = new Date();
   }
-  next();
 });
 
 const Application = mongoose.model('Application', applicationSchema);

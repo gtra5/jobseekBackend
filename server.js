@@ -1,5 +1,6 @@
 require('dotenv').config();
 const http = require('http');
+const mongoose = require('mongoose');
 const { connectDB } = require('./config/db');
 const app = require('./app');
 const { seedAssessments } = require('./models');
@@ -24,6 +25,7 @@ const server = http.createServer(app);
 
 // Initialize Socket.io
 const io = initializeSocket(server);
+app.set('io', io); // makes io reachable from controllers via req.app.get('io')
 console.log('Socket.io initialized');
 
 // Start server
@@ -43,4 +45,18 @@ process.on('uncaughtException', (err) => {
   console.error(`Uncaught Exception: ${err.message}`);
   // Close server & exit process
   server.close(() => process.exit(1));
+});
+
+// Handle SIGTERM (sent by Render, Docker, etc. on every redeploy/restart)
+// Finish in-flight requests and close the DB connection cleanly instead of
+// dropping active requests mid-response.
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received: shutting down gracefully');
+  server.close(() => {
+    console.log('HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
 });

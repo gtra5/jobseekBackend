@@ -25,6 +25,24 @@ router.post('/:jobId', authenticate, isJobSeeker, applicationValidators.apply, a
 router.get('/', authenticate, applicationController.getMyApplications);
 
 /**
+ * @route   GET /api/applications/employer/all
+ * @desc    Get all applications for employer's jobs
+ * @access  Private (Employer only)
+ *
+ * NOTE: this must be registered BEFORE '/employer/:jobId' below —
+ * otherwise Express matches "all" as a :jobId value and this route
+ * never gets hit.
+ */
+router.get('/employer/all', authenticate, isEmployer, applicationController.getEmployerApplications);
+
+/**
+ * @route   GET /api/applications/employer/:jobId
+ * @desc    Get all applications for a specific job
+ * @access  Private (Employer only)
+ */
+router.get('/employer/:jobId', authenticate, isEmployer, applicationController.getJobApplications);
+
+/**
  * @route   GET /api/applications/:applicationId
  * @desc    Get application by ID
  * @access  Private
@@ -44,20 +62,6 @@ router.put('/:applicationId/status', authenticate, isEmployer, applicationValida
  * @access  Private (Job Seeker only)
  */
 router.put('/:applicationId/withdraw', authenticate, isJobSeeker, applicationController.withdrawApplication);
-
-/**
- * @route   GET /api/applications/employer/:jobId
- * @desc    Get all applications for a specific job
- * @access  Private (Employer only)
- */
-router.get('/employer/:jobId', authenticate, isEmployer, applicationController.getJobApplications);
-
-/**
- * @route   GET /api/applications/employer/all
- * @desc    Get all applications for employer's jobs
- * @access  Private (Employer only)
- */
-router.get('/employer/all', authenticate, isEmployer, applicationController.getEmployerApplications);
 
 /**
  * @route   POST /api/applications/:applicationId/interview
