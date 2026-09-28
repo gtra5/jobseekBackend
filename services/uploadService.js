@@ -3,7 +3,7 @@
  * Handles file uploads to AWS S3 using presigned URLs
  */
 
-const { generatePresignedUploadUrl, generatePresignedAccessUrl, deleteFile, BUCKET_NAME } = require('../config/storage');
+const { generatePresignedUploadUrl, generatePresignedAccessUrl, deleteFile, uploadBuffer, BUCKET_NAME } = require('../config/storage');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -22,6 +22,23 @@ const generateFileKey = (originalName, folder) => {
 };
 
 /**
+ * Upload a file already received in memory (multer) directly to S3.
+ * This is the actual upload step that was missing: generateUploadUrl below
+ * only ever produced a presigned URL — nothing sent the file's bytes
+ * anywhere. Use this whenever your route already has req.file.buffer.
+ * @param {Buffer} buffer - File contents from multer memory storage
+ * @param {string} originalName - Original file name
+ * @param {string} contentType - MIME type
+ * @param {string} folder - Folder name (resumes, logos, avatars)
+ * @returns {Promise<{fileKey: string, publicUrl: string}>}
+ */
+const uploadFileBuffer = async (buffer, originalName, contentType, folder = 'uploads') => {
+  const fileKey = generateFileKey(originalName, folder);
+  const { key, url } = await uploadBuffer(buffer, fileKey, contentType);
+  return { fileKey: key, publicUrl: url };
+};
+
+/**
  * Generate presigned upload URL for a file
  * @param {string} originalName - Original file name
  * @param {string} contentType - MIME type
@@ -35,7 +52,7 @@ const generateUploadUrl = async (originalName, contentType, folder = 'uploads') 
   return {
     uploadUrl,
     fileKey,
-    publicUrl: `https://${BUCKET_NAME}.s3.amazonaws.com/${fileKey}`
+    publicUrl: `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${fileKey}`
   };
 };
 
@@ -90,6 +107,7 @@ const uploadAndCleanup = async (originalName, contentType, folder = 'uploads') =
 };
 
 module.exports = {
+  uploadFileBuffer,
   generateUploadUrl,
   generateAccessUrl,
   deleteFileByKey,

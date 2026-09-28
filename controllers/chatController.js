@@ -4,11 +4,13 @@
  * All endpoints require authentication and restrict users to their own threads.
  */
 
+const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiResponse = require('../utils/apiResponse');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 
 /**
  * Resolve a Conversation and ensure the requesting user is a participant.
@@ -21,6 +23,26 @@ const getOwnedConversation = async (conversationId, userId) => {
     (p) => p.toString() === userId
   );
   return isParticipant ? conversation : false;
+};
+
+/**
+ * Mark any unread "message" notifications for this conversation as read for
+ * this user, and nudge their own notification bell to refetch immediately.
+ * Without this, opening/reading a conversation leaves the bell badge stuck
+ * on a stale count until something else happens to trigger a refresh.
+ */
+const clearMessageNotifications = async (userId, conversationId, io) => {
+  try {
+    const result = await Notification.updateMany(
+      { recipient: userId, type: 'message', isRead: false, 'data.conversationId': conversationId },
+      { isRead: true, readAt: new Date() }
+    );
+    if (result.modifiedCount > 0 && io) {
+      io.to(userId).emit('notification', { type: 'read_sync' });
+    }
+  } catch (notifErr) {
+    console.error('Error clearing message notifications:', notifErr.message);
+  }
 };
 
 /**
@@ -42,9 +64,15 @@ const getMyConversations = asyncHandler(async (req, res) => {
   const ids = conversations.map((c) => c._id);
   let unreadByConv = {};
   if (ids.length) {
+    // req.userId is a string. Unlike find()/updateMany(), aggregate() does NOT
+    // cast strings to ObjectIds, so without this the $ne checks below never
+    // matched anything: every message (even your own, even already-read ones)
+    // counted as unread on every reload and the badge came back after leaving
+    // the page. Cast explicitly.
+    const userObjectId = new mongoose.Types.ObjectId(userId);
     const unread = await Message.aggregate([
-      { $match: { conversation: { $in: ids }, sender: { $ne: userId } } },
-      { $match: { readBy: { $ne: userId } } },
+      { $match: { conversation: { $in: ids }, sender: { $ne: userObjectId } } },
+      { $match: { readBy: { $ne: userObjectId } } },
       { $group: { _id: '$conversation', count: { $sum: 1 } } },
     ]);
     unread.forEach((u) => { unreadByConv[u._id.toString()] = u.count; });
@@ -153,6 +181,7 @@ const getMessages = asyncHandler(async (req, res) => {
     { conversation: conversationId, sender: { $ne: userId }, readBy: { $ne: userId } },
     { $addToSet: { readBy: userId }, $set: { readAt: new Date() } }
   );
+  await clearMessageNotifications(userId, conversationId, req.app.get('io'));
 
   const flat = messages.map((m) => ({
     id: m._id,
@@ -208,15 +237,48 @@ const sendMessage = asyncHandler(async (req, res) => {
 
   await message.populate('sender', 'firstName lastName avatar role');
 
+  const messagePayload = {
+    id: message._id,
+    conversation: message.conversation,
+    sender: message.sender,
+    content: message.content,
+    readBy: message.readBy,
+    createdAt: message.createdAt,
+  };
+
+  // Push to the conversation room in real time. This is the REST fallback
+  // path (the frontend sends over the socket directly when connected) — but
+  // when the socket is down at send time, this is the only way the other
+  // participant finds out a message arrived, so it must broadcast too.
+  const io = req.app.get('io');
+  if (io) {
+    io.to(conversationId).emit('new_message', messagePayload);
+  } else {
+    console.warn('sendMessage: no io instance on req.app — message saved but not broadcast');
+  }
+
+  // Persist an actual Notification for the other participant(s) — mirrors
+  // chatSocket.js's send_message handler so the notification bell reflects
+  // real messages the same way whether they arrive over the socket or this
+  // REST fallback.
+  try {
+    const senderName = [message.sender?.firstName, message.sender?.lastName].filter(Boolean).join(' ') || 'Someone';
+    const otherParticipants = conversation.participants.filter((p) => p.toString() !== userId);
+    await Promise.all(otherParticipants.map((participantId) => Notification.create({
+      recipient: participantId,
+      type: 'message',
+      title: `New message from ${senderName}`,
+      message: content.trim().slice(0, 140),
+      relatedEntity: { type: 'message', id: message._id },
+      actionUrl: `/chat?conversation=${conversationId}`,
+      data: { conversationId },
+    })));
+  } catch (notifErr) {
+    console.error('Failed to create message notification:', notifErr.message);
+  }
+
   return ApiResponse.created(res, 'Message sent', {
-    message: {
-      id: message._id,
-      conversation: message.conversation,
-      sender: message.sender,
-      content: message.content,
-      readBy: message.readBy,
-      createdAt: message.createdAt,
-    },
+    message: messagePayload,
     conversation: {
       id: conversation._id,
       lastMessage: message._id,
@@ -246,6 +308,7 @@ const markRead = asyncHandler(async (req, res) => {
     { conversation: conversationId, sender: { $ne: userId }, readBy: { $ne: userId } },
     { $addToSet: { readBy: userId }, $set: { readAt: new Date() } }
   );
+  await clearMessageNotifications(userId, conversationId, req.app.get('io'));
 
   return ApiResponse.success(res, 200, 'Conversation marked as read');
 });

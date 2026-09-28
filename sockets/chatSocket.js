@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
+const Notification = require('../models/Notification');
 const logger = require('../utils/logger');
 
 /**
@@ -33,7 +34,11 @@ const initializeSocket = (server) => {
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId).select('-password');
+      // Access tokens are always signed as { id, role } (see authController.js's
+      // generateAccessToken calls) — decoded.userId does not exist on this
+      // payload and was always undefined, which made User.findById() match
+      // nothing and silently reject every socket connection's authentication.
+      const user = await User.findById(decoded.id).select('-password');
 
       if (!user || !user.isActive) {
         return next(new Error('Authentication error: Invalid user'));
@@ -85,6 +90,23 @@ const initializeSocket = (server) => {
           { conversation: conversationId, sender: { $ne: socket.userId }, readBy: { $ne: socket.userId } },
           { $addToSet: { readBy: socket.userId }, $set: { readAt: new Date() } }
         );
+
+        // Opening a conversation also clears any "new message" notifications
+        // tied to it, so the notification bell badge actually reflects real
+        // unread messages instead of staying stuck after the user has
+        // already read them here.
+        try {
+          const notifResult = await Notification.updateMany(
+            { recipient: socket.userId, type: 'message', isRead: false, 'data.conversationId': conversationId },
+            { isRead: true, readAt: new Date() }
+          );
+          if (notifResult.modifiedCount > 0) {
+            // Nudge this user's own bell to refetch and show the drop immediately.
+            io.to(socket.userId).emit('notification', { type: 'read_sync' });
+          }
+        } catch (notifErr) {
+          logger.error(`Error clearing message notifications for conversation ${conversationId}: ${notifErr.message}`);
+        }
 
         // Emit updated unread count
         const unreadCount = await Message.countDocuments({
@@ -176,6 +198,8 @@ const initializeSocket = (server) => {
           (p) => p.toString() !== socket.userId
         );
 
+        const senderName = [socket.user.firstName, socket.user.lastName].filter(Boolean).join(' ') || 'Someone';
+
         otherParticipants.forEach((participantId) => {
           io.to(participantId.toString()).emit('notification', {
             type: 'new_message',
@@ -184,6 +208,24 @@ const initializeSocket = (server) => {
             sender: socket.user,
           });
         });
+
+        // Persist an actual Notification document per recipient — without
+        // this, the "notification" socket event above triggers the bell to
+        // refetch, but there was nothing new in the database for it to find,
+        // so the badge never actually reflected the message that "caused" it.
+        try {
+          await Promise.all(otherParticipants.map((participantId) => Notification.create({
+            recipient: participantId,
+            type: 'message',
+            title: `New message from ${senderName}`,
+            message: content.trim().slice(0, 140),
+            relatedEntity: { type: 'message', id: message._id },
+            actionUrl: `/chat?conversation=${conversationId}`,
+            data: { conversationId },
+          })));
+        } catch (notifErr) {
+          logger.error(`Failed to create message notification: ${notifErr.message}`);
+        }
 
         logger.info(`Message sent in conversation ${conversationId} by user ${socket.userId}`);
 
@@ -204,6 +246,21 @@ const initializeSocket = (server) => {
           { conversation: conversationId, sender: { $ne: socket.userId }, readBy: { $ne: socket.userId } },
           { $addToSet: { readBy: socket.userId }, $set: { readAt: new Date() } }
         );
+
+        // Same badge-clearing as join_conversation — this handler is a
+        // separate entry point (e.g. re-marking read without rejoining)
+        // and needs to keep the notification bell in sync too.
+        try {
+          const notifResult = await Notification.updateMany(
+            { recipient: socket.userId, type: 'message', isRead: false, 'data.conversationId': conversationId },
+            { isRead: true, readAt: new Date() }
+          );
+          if (notifResult.modifiedCount > 0) {
+            io.to(socket.userId).emit('notification', { type: 'read_sync' });
+          }
+        } catch (notifErr) {
+          logger.error(`Error clearing message notifications for conversation ${conversationId}: ${notifErr.message}`);
+        }
 
         // Notify sender that messages were read
         const conversation = await Conversation.findById(conversationId);

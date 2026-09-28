@@ -162,8 +162,68 @@ const register = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Issue a full session for a user: create the refresh token record, set the
+ * httpOnly cookies and send the login response. Only called once BOTH the
+ * password and the login OTP have been verified.
+ */
+const issueLoginSession = async (req, res, user) => {
+  user.lastLogin = new Date();
+  await user.save();
+
+  const accessToken = generateAccessToken({ id: user._id, role: user.role });
+  const refreshToken = generateRefreshToken({ id: user._id });
+
+  await RefreshToken.create({
+    token: refreshToken,
+    userId: user._id,
+    userAgent: req.headers["user-agent"],
+    ipAddress: req.ip,
+  });
+
+  user.password = undefined;
+
+  const isProduction = process.env.NODE_ENV === "production";
+  const cookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+  };
+
+  res.cookie("accessToken", accessToken, {
+    ...cookieOptions,
+    maxAge: 15 * 60 * 1000, // 15 minutes
+  });
+  res.cookie("refreshToken", refreshToken, {
+    ...cookieOptions,
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  });
+
+  logAuthEvent.loginSuccess(
+    user._id,
+    user.email,
+    req.ip,
+    req.headers["user-agent"],
+  );
+
+  return ApiResponse.success(res, 200, "Login successful", {
+    accessToken,
+    user: {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      isVerified: user.isVerified,
+      profileCompletion: user.getProfileCompletion(),
+    },
+  });
+};
+
+/**
  * POST /api/auth/login
- * Login user
+ * Step 1 of login: check email + password. If they are correct, email a
+ * one-time code and tell the client to ask for it. NO tokens or cookies are
+ * issued here — the session only starts after POST /api/auth/verify-login.
  */
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -194,65 +254,49 @@ const login = asyncHandler(async (req, res) => {
     return ApiResponse.unauthorized(res, "Invalid email or password");
   }
 
-  // Update last login
-  user.lastLogin = new Date();
-  await user.save();
+  // Password is correct — send the login code to the account's own email.
+  try {
+    await otpService.persistAndSendOTP(user.email, "login", req.ip);
+  } catch (err) {
+    console.error("[login] Failed to create login OTP:", err.message);
+    return ApiResponse.badRequest(
+      res,
+      err.message || "Could not send a verification code. Please try again.",
+    );
+  }
 
-  // Generate tokens
-  const accessToken = generateAccessToken({ id: user._id, role: user.role });
-  const refreshToken = generateRefreshToken({ id: user._id });
-
-  // Store refresh token in database
-  await RefreshToken.create({
-    token: refreshToken,
-    userId: user._id,
-    userAgent: req.headers["user-agent"],
-    ipAddress: req.ip,
-  });
-
-  // Remove password from response
-  user.password = undefined;
-
-  const isProduction = process.env.NODE_ENV === 'production';
-  const cookieOptions = {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax',
-  };
-
-  // Set access token as httpOnly cookie (short-lived)
-  res.cookie('accessToken', accessToken, {
-    ...cookieOptions,
-    maxAge: 15 * 60 * 1000, // 15 minutes
-  });
-
-  // Set refresh token as httpOnly cookie (long-lived)
-  res.cookie('refreshToken', refreshToken, {
-    ...cookieOptions,
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-  });
-
-  logAuthEvent.loginSuccess(
-    user._id,
-    user.email,
-    req.ip,
-    req.headers['user-agent'],
+  return ApiResponse.success(
+    res,
+    200,
+    "Verification code sent. Please check your email.",
+    { requiresOtp: true, email: user.email },
   );
+});
 
-  // Return accessToken in body so frontend can attach it as a Bearer header.
-  // It is also set as an httpOnly cookie for added security.
-  return ApiResponse.success(res, 200, "Login successful", {
-    accessToken,
-    user: {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      isVerified: user.isVerified,
-      profileCompletion: user.getProfileCompletion(),
-    },
-  });
+/**
+ * POST /api/auth/verify-login
+ * Step 2 of login: verify the emailed code, then issue the session.
+ */
+const verifyLogin = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+  const normalizedEmail = email.toLowerCase();
+
+  const user = await User.findOne({ email: normalizedEmail });
+  if (!user || !user.isActive || user.isDeleted) {
+    return ApiResponse.unauthorized(res, "Invalid or expired code");
+  }
+
+  let otpRecord;
+  try {
+    otpRecord = await otpService.verifyOTP(normalizedEmail, otp, "login");
+  } catch (err) {
+    return ApiResponse.badRequest(res, err.message || "Invalid or expired OTP");
+  }
+
+  // One-time use
+  await OTP.deleteOne({ _id: otpRecord._id });
+
+  return issueLoginSession(req, res, user);
 });
 
 /**
@@ -458,7 +502,7 @@ const verifyEmail = asyncHandler(async (req, res) => {
 const resendOTP = asyncHandler(async (req, res) => {
   const { email, type } = req.body;
 
-  const validTypes = ['registration', 'email_verification', 'password_reset'];
+  const validTypes = ['registration', 'email_verification', 'password_reset', 'login'];
   if (!type || !validTypes.includes(type)) {
     return ApiResponse.badRequest(
       res,
@@ -553,6 +597,7 @@ module.exports = {
   preRegister,
   register,
   login,
+  verifyLogin,
   logout,
   refreshToken,
   forgotPassword,

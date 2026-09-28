@@ -3,12 +3,15 @@
  * Handles user profile management and updates
  */
 
-const asyncHandler = require('../utils/asyncHandler');
-const ApiResponse = require('../utils/apiResponse');
-const User = require('../models/User');
-const PROFESSIONS = require('../constants/professions');
-const { generateUploadUrl, deleteFileByKey } = require('../services/uploadService');
-const { purgeUser } = require('../services/cleanupService');
+const asyncHandler = require("../utils/asyncHandler");
+const ApiResponse = require("../utils/apiResponse");
+const User = require("../models/User");
+const PROFESSIONS = require("../constants/professions");
+const {
+  uploadFileBuffer,
+  deleteFileByKey,
+} = require("../services/uploadService");
+const { purgeUser } = require("../services/cleanupService");
 
 /**
  * GET /api/users/:id
@@ -19,19 +22,19 @@ const getUserById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   // Find user and verify they are a jobseeker
-  const user = await User.findOne({ _id: id, role: 'jobseeker' }).select(
-    'firstName lastName avatar role professions ' +
-    'profile.headline profile.skills profile.experience profile.education ' +
-    'profile.portfolioUrl profile.linkedinUrl profile.githubUrl ' +
-    'profile.preferredJobTypes profile.primaryCategory profile.preferredLocations ' +
-    'profile.verifiedSkills'
+  const user = await User.findOne({ _id: id, role: "jobseeker" }).select(
+    "firstName lastName avatar role professions " +
+      "profile.headline profile.skills profile.experience profile.education " +
+      "profile.portfolioUrl profile.linkedinUrl profile.githubUrl " +
+      "profile.preferredJobTypes profile.primaryCategory profile.preferredLocations " +
+      "profile.verifiedSkills",
   );
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  return ApiResponse.success(res, 200, 'User retrieved successfully', { user });
+  return ApiResponse.success(res, 200, "User retrieved successfully", { user });
 });
 
 /**
@@ -51,20 +54,25 @@ const getPublicProfile = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const user = await User.findOne({ _id: id, isDeleted: false }).select(
-    'firstName lastName avatar role professions ' +
-    'profile.headline profile.skills profile.verifiedSkills ' +
-    'profile.portfolioUrl profile.linkedinUrl profile.githubUrl ' +
-    'profile.preferredJobTypes profile.primaryCategory ' +
-    'company.name company.logo company.industry company.website'
+    "firstName lastName avatar role professions " +
+      "profile.headline profile.skills profile.verifiedSkills " +
+      "profile.portfolioUrl profile.linkedinUrl profile.githubUrl " +
+      "profile.preferredJobTypes profile.primaryCategory " +
+      "company.name company.logo company.industry company.website",
   );
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  return ApiResponse.success(res, 200, 'Public profile retrieved successfully', {
-    profile: user,
-  });
+  return ApiResponse.success(
+    res,
+    200,
+    "Public profile retrieved successfully",
+    {
+      profile: user,
+    },
+  );
 });
 
 /**
@@ -76,24 +84,27 @@ const updateProfessions = asyncHandler(async (req, res) => {
   const { professions } = req.body;
 
   if (!Array.isArray(professions)) {
-    return ApiResponse.badRequest(res, 'professions must be an array');
+    return ApiResponse.badRequest(res, "professions must be an array");
   }
 
   const invalid = professions.filter((p) => !PROFESSIONS.includes(p));
   if (invalid.length > 0) {
-    return ApiResponse.badRequest(res, `Invalid professions: ${invalid.join(', ')}`);
+    return ApiResponse.badRequest(
+      res,
+      `Invalid professions: ${invalid.join(", ")}`,
+    );
   }
 
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   user.professions = [...new Set(professions)];
   await user.save();
 
-  return ApiResponse.success(res, 200, 'Professions updated successfully', {
+  return ApiResponse.success(res, 200, "Professions updated successfully", {
     professions: user.professions,
   });
 });
@@ -108,7 +119,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   // Update basic info
@@ -120,7 +131,9 @@ const updateProfile = asyncHandler(async (req, res) => {
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Profile updated successfully', { user });
+  return ApiResponse.success(res, 200, "Profile updated successfully", {
+    user,
+  });
 });
 
 /**
@@ -131,11 +144,14 @@ const updateJobSeekerProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  if (user.role !== 'jobseeker') {
-    return ApiResponse.forbidden(res, 'Only job seekers can update job seeker profile');
+  if (user.role !== "jobseeker") {
+    return ApiResponse.forbidden(
+      res,
+      "Only job seekers can update job seeker profile",
+    );
   }
 
   const {
@@ -160,16 +176,25 @@ const updateJobSeekerProfile = asyncHandler(async (req, res) => {
   if (portfolioUrl !== undefined) user.profile.portfolioUrl = portfolioUrl;
   if (linkedinUrl !== undefined) user.profile.linkedinUrl = linkedinUrl;
   if (githubUrl !== undefined) user.profile.githubUrl = githubUrl;
-  if (preferredJobTypes !== undefined) user.profile.preferredJobTypes = preferredJobTypes;
-  if (preferredLocations !== undefined) user.profile.preferredLocations = preferredLocations;
-  if (expectedSalary !== undefined) user.profile.expectedSalary = expectedSalary;
-  if (primaryCategory !== undefined) user.profile.primaryCategory = primaryCategory;
+  if (preferredJobTypes !== undefined)
+    user.profile.preferredJobTypes = preferredJobTypes;
+  if (preferredLocations !== undefined)
+    user.profile.preferredLocations = preferredLocations;
+  if (expectedSalary !== undefined)
+    user.profile.expectedSalary = expectedSalary;
+  if (primaryCategory !== undefined)
+    user.profile.primaryCategory = primaryCategory;
 
   await user.save();
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Job seeker profile updated successfully', { user });
+  return ApiResponse.success(
+    res,
+    200,
+    "Job seeker profile updated successfully",
+    { user },
+  );
 });
 
 /**
@@ -180,11 +205,14 @@ const updateEmployerProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  if (user.role !== 'employer') {
-    return ApiResponse.forbidden(res, 'Only employers can update employer profile');
+  if (user.role !== "employer") {
+    return ApiResponse.forbidden(
+      res,
+      "Only employers can update employer profile",
+    );
   }
 
   const {
@@ -210,7 +238,12 @@ const updateEmployerProfile = asyncHandler(async (req, res) => {
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Employer profile updated successfully', { user });
+  return ApiResponse.success(
+    res,
+    200,
+    "Employer profile updated successfully",
+    { user },
+  );
 });
 
 /**
@@ -223,24 +256,35 @@ const updateNotificationSettings = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   if (email) {
-    user.notificationSettings.email = { ...user.notificationSettings.email, ...email };
+    user.notificationSettings.email = {
+      ...user.notificationSettings.email,
+      ...email,
+    };
   }
 
   if (push) {
-    user.notificationSettings.push = { ...user.notificationSettings.push, ...push };
+    user.notificationSettings.push = {
+      ...user.notificationSettings.push,
+      ...push,
+    };
   }
 
   await user.save();
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Notification settings updated successfully', {
-    notificationSettings: user.notificationSettings,
-  });
+  return ApiResponse.success(
+    res,
+    200,
+    "Notification settings updated successfully",
+    {
+      notificationSettings: user.notificationSettings,
+    },
+  );
 });
 
 /**
@@ -251,25 +295,26 @@ const updateAvatar = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   if (!req.file) {
-    return ApiResponse.badRequest(res, 'No avatar file provided');
+    return ApiResponse.badRequest(res, "No avatar file provided");
   }
 
-  // Generate presigned upload URL for the avatar
-  const { uploadUrl, fileKey, publicUrl } = await generateUploadUrl(
+  // Actually upload the received file to S3. This used to only generate a
+  // presigned upload URL and never use it — the file itself was never sent
+  // anywhere, only a URL pointing at an object that didn't exist got saved.
+  const { fileKey, publicUrl } = await uploadFileBuffer(
+    req.file.buffer,
     req.file.originalname,
     req.file.mimetype,
-    'avatars'
+    "avatars",
   );
 
   // Delete old avatar from S3 if one exists
-  const currentAvatar = user.avatar;
-  if (currentAvatar && currentAvatar.includes('amazonaws.com')) {
-    const oldFileKey = currentAvatar.split('.amazonaws.com/')[1];
-    await deleteFileByKey(oldFileKey);
+  if (user.avatarKey) {
+    await deleteFileByKey(user.avatarKey).catch(() => {});
   }
 
   user.avatar = publicUrl;
@@ -278,11 +323,7 @@ const updateAvatar = asyncHandler(async (req, res) => {
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Avatar updated successfully', { 
-    user,
-    uploadUrl,
-    fileKey
-  });
+  return ApiResponse.success(res, 200, "Avatar updated successfully", { user });
 });
 
 /**
@@ -293,27 +334,29 @@ const updateResume = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  if (user.role !== 'jobseeker') {
-    return ApiResponse.forbidden(res, 'Only job seekers can upload a resume');
+  if (user.role !== "jobseeker") {
+    return ApiResponse.forbidden(res, "Only job seekers can upload a resume");
   }
 
   if (!req.file) {
-    return ApiResponse.badRequest(res, 'No resume file provided');
+    return ApiResponse.badRequest(res, "No resume file provided");
   }
 
-  // Generate presigned upload URL for the resume
-  const { uploadUrl, fileKey, publicUrl } = await generateUploadUrl(
+  // Actually upload the received file to S3 (see updateAvatar above for why
+  // this replaced the old generateUploadUrl-only call).
+  const { fileKey, publicUrl } = await uploadFileBuffer(
+    req.file.buffer,
     req.file.originalname,
     req.file.mimetype,
-    'resumes'
+    "resumes",
   );
 
   // Delete old resume from S3 if one exists
   if (user.profile?.resume?.fileKey) {
-    await deleteFileByKey(user.profile.resume.fileKey);
+    await deleteFileByKey(user.profile.resume.fileKey).catch(() => {});
   }
 
   user.profile.resume = {
@@ -325,42 +368,45 @@ const updateResume = asyncHandler(async (req, res) => {
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Resume uploaded successfully', {
+  return ApiResponse.success(res, 200, "Resume uploaded successfully", {
     resume: user.profile.resume,
-    uploadUrl,
-    fileKey
   });
 });
 
 /**
  * PUT /api/users/company-logo
- * Upload / replace employer company logo
+ * Upload / replace company logo
  */
 const updateCompanyLogo = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  if (user.role !== 'employer') {
-    return ApiResponse.forbidden(res, 'Only employers can upload a company logo');
+  if (user.role !== "employer") {
+    return ApiResponse.forbidden(
+      res,
+      "Only employers can upload a company logo",
+    );
   }
 
   if (!req.file) {
-    return ApiResponse.badRequest(res, 'No logo file provided');
+    return ApiResponse.badRequest(res, "No logo file provided");
   }
 
-  // Generate presigned upload URL for the company logo
-  const { uploadUrl, fileKey, publicUrl } = await generateUploadUrl(
+  // Actually upload the received file to S3 (see updateAvatar above for why
+  // this replaced the old generateUploadUrl-only call).
+  const { fileKey, publicUrl } = await uploadFileBuffer(
+    req.file.buffer,
     req.file.originalname,
     req.file.mimetype,
-    'company-logos'
+    "company-logos",
   );
 
   // Delete old logo from S3 if one exists
   if (user.company?.logo?.fileKey) {
-    await deleteFileByKey(user.company.logo.fileKey);
+    await deleteFileByKey(user.company.logo.fileKey).catch(() => {});
   }
 
   user.company.logo = { url: publicUrl, fileKey };
@@ -368,13 +414,10 @@ const updateCompanyLogo = asyncHandler(async (req, res) => {
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Company logo updated successfully', {
+  return ApiResponse.success(res, 200, "Company logo updated successfully", {
     logo: user.company.logo,
-    uploadUrl,
-    fileKey
   });
 });
-
 /**
  * DELETE /api/users/avatar
  * Delete user avatar
@@ -383,12 +426,12 @@ const deleteAvatar = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId);
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   if (user.avatar) {
     // Delete from S3 if it's an S3 URL
-    if (user.avatar.includes('amazonaws.com') && user.avatarKey) {
+    if (user.avatar.includes("amazonaws.com") && user.avatarKey) {
       await deleteFileByKey(user.avatarKey);
     }
 
@@ -399,7 +442,7 @@ const deleteAvatar = asyncHandler(async (req, res) => {
 
   user.password = undefined;
 
-  return ApiResponse.success(res, 200, 'Avatar deleted successfully', { user });
+  return ApiResponse.success(res, 200, "Avatar deleted successfully", { user });
 });
 
 /**
@@ -409,16 +452,16 @@ const deleteAvatar = asyncHandler(async (req, res) => {
 const deleteAccount = asyncHandler(async (req, res) => {
   const { password } = req.body;
 
-  const user = await User.findById(req.userId).select('+password');
+  const user = await User.findById(req.userId).select("+password");
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   // Verify password
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
-    return ApiResponse.unauthorized(res, 'Invalid password');
+    return ApiResponse.unauthorized(res, "Invalid password");
   }
 
   // Soft delete
@@ -428,7 +471,7 @@ const deleteAccount = asyncHandler(async (req, res) => {
   user.email = `${user.email}-deleted-${Date.now()}`;
   await user.save();
 
-  return ApiResponse.success(res, 200, 'Account deleted successfully');
+  return ApiResponse.success(res, 200, "Account deleted successfully");
 });
 
 /**
@@ -440,20 +483,20 @@ const deleteAccount = asyncHandler(async (req, res) => {
 const deleteAccountPermanent = asyncHandler(async (req, res) => {
   const { password } = req.body;
 
-  const user = await User.findById(req.userId).select('+password');
+  const user = await User.findById(req.userId).select("+password");
 
   if (!user) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
-    return ApiResponse.unauthorized(res, 'Invalid password');
+    return ApiResponse.unauthorized(res, "Invalid password");
   }
 
   await purgeUser(user);
 
-  return ApiResponse.success(res, 200, 'Account permanently deleted');
+  return ApiResponse.success(res, 200, "Account permanently deleted");
 });
 
 /**
@@ -465,19 +508,22 @@ const deleteAccountPermanent = asyncHandler(async (req, res) => {
 const hardDeleteUser = asyncHandler(async (req, res) => {
   const { userId } = req.params;
 
-  const target = await User.findById(userId).select('role');
+  const target = await User.findById(userId).select("role");
 
   if (!target) {
-    return ApiResponse.notFound(res, 'User not found');
+    return ApiResponse.notFound(res, "User not found");
   }
 
-  if (target.role === 'admin') {
-    return ApiResponse.forbidden(res, 'Admin accounts cannot be permanently deleted');
+  if (target.role === "admin") {
+    return ApiResponse.forbidden(
+      res,
+      "Admin accounts cannot be permanently deleted",
+    );
   }
 
   await purgeUser(userId);
 
-  return ApiResponse.success(res, 200, 'Account permanently deleted');
+  return ApiResponse.success(res, 200, "Account permanently deleted");
 });
 
 module.exports = {

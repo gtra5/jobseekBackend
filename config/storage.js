@@ -19,6 +19,38 @@ const s3Client = new S3Client({
 const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || 'voraq-uploads';
 
 /**
+ * Upload a file buffer directly to S3 (server-side).
+ * Use this when the file already arrived at this server via multer (memory
+ * storage) — there is no reason to also hand the client a presigned upload
+ * URL in that case, since the bytes are already here.
+ * @param {Buffer} buffer - File contents already in memory
+ * @param {string} key - File key/path in bucket
+ * @param {string} contentType - MIME type of the file
+ * @returns {Promise<{key: string, url: string}>}
+ */
+const uploadBuffer = async (buffer, key, contentType) => {
+  try {
+    const command = new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+    });
+
+    await s3Client.send(command);
+    logger.info(`File uploaded successfully: ${key}`);
+
+    return {
+      key,
+      url: `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${key}`,
+    };
+  } catch (error) {
+    logger.error(`Error uploading file to S3: ${error.message}`);
+    throw new Error('Failed to upload file to storage');
+  }
+};
+
+/**
  * Generate presigned URL for file upload
  * @param {string} key - File key/path in bucket
  * @param {string} contentType - MIME type of the file
@@ -109,6 +141,7 @@ const fileExists = async (key) => {
 module.exports = {
   s3Client,
   BUCKET_NAME,
+  uploadBuffer,
   generatePresignedUploadUrl,
   generatePresignedAccessUrl,
   deleteFile,

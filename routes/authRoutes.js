@@ -8,7 +8,7 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const { authenticate } = require('../middleware/authMiddleware');
 const { authValidators } = require('../middleware/validateRequest');
-const { otpRateLimiter } = require('../middleware/otpRateLimit');
+const { otpRateLimiter, otpVerifyLimiter } = require('../middleware/otpRateLimit');
 
 /**
  * @route   POST /api/auth/pre-register
@@ -26,10 +26,17 @@ router.post('/register', authValidators.register, authController.register);
 
 /**
  * @route   POST /api/auth/login
- * @desc    Login user
+ * @desc    Step 1 of login: check password, email an OTP (no tokens issued yet)
  * @access  Public
  */
 router.post('/login', authValidators.login, authController.login);
+
+/**
+ * @route   POST /api/auth/verify-login
+ * @desc    Step 2 of login: verify the emailed OTP, then issue tokens
+ * @access  Public
+ */
+router.post('/verify-login', otpVerifyLimiter, authValidators.verifyOTP, authController.verifyLogin);
 
 /**
  * @route   POST /api/auth/logout

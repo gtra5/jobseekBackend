@@ -2,6 +2,15 @@
  * Queue Service
  * Set up BullMQ with Redis to offload heavy tasks
  * Handles background email sending and scheduled job sourcing
+ *
+ * NOT CURRENTLY WIRED UP: nothing else in the codebase requires this file,
+ * so none of it runs today — OTP emails are sent inline via otpService's
+ * fire-and-forget sendOTP() instead. Before using this, add REDIS_HOST /
+ * REDIS_PORT / REDIS_PASSWORD to .env(.example) and require it from
+ * server.js. Its own SIGTERM/SIGINT handlers were removed (see bottom of
+ * this file) because they raced with server.js's own graceful-shutdown
+ * handler — re-add a shutdown hook only inside server.js's existing one,
+ * not as a second independent process.on() here.
  */
 
 const { Queue, Worker } = require('bullmq');
@@ -105,9 +114,9 @@ const emailWorker = new Worker(
   'email-queue',
   async (job) => {
     const { type, data } = job.data;
-    
+
     logger.info(`Processing email job: ${job.id}, type: ${type}`);
-    
+
     switch (type) {
       case 'otp':
         await sendOTPEmail(data.email, data.otp, data.otpType);
@@ -139,7 +148,7 @@ const emailWorker = new Worker(
       default:
         throw new Error(`Unknown email type: ${type}`);
     }
-    
+
     logger.info(`Email job completed: ${job.id}`);
   },
   {
@@ -163,13 +172,13 @@ const jobSourcingWorker = new Worker(
   'job-sourcing-queue',
   async (job) => {
     const { source, data } = job.data;
-    
+
     logger.info(`Processing job sourcing job: ${job.id}, source: ${source}`);
-    
+
     // Job sourcing logic will be handled by jobSourcingService
     // This worker will call the appropriate service based on source
     const { aggregateJobs } = require('./jobSourcingService');
-    
+
     switch (source) {
       case 'adzuna':
         await aggregateJobs('adzuna', data);
@@ -183,7 +192,7 @@ const jobSourcingWorker = new Worker(
       default:
         throw new Error(`Unknown job source: ${source}`);
     }
-    
+
     logger.info(`Job sourcing job completed: ${job.id}`);
   },
   {
@@ -205,19 +214,21 @@ jobSourcingWorker.on('failed', (job, err) => {
  */
 const gracefulShutdown = async () => {
   logger.info('Closing queues and workers...');
-  
+
   await emailWorker.close();
   await jobSourcingWorker.close();
   await emailQueue.close();
   await jobSourcingQueue.close();
   await connection.quit();
-  
+
   logger.info('Graceful shutdown completed');
   process.exit(0);
 };
 
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+// Intentionally NOT registered here: process.on('SIGTERM'/'SIGINT', ...).
+// server.js already owns process-level shutdown. If/when this service is
+// wired up, call gracefulShutdown() from inside server.js's existing
+// SIGTERM handler instead of adding a second, competing one here.
 
 module.exports = {
   addEmailJob,
@@ -226,4 +237,5 @@ module.exports = {
   jobSourcingQueue,
   emailWorker,
   jobSourcingWorker,
+  gracefulShutdown,
 };

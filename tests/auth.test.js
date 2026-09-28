@@ -144,12 +144,13 @@ describe('Auth Routes', () => {
 
       // Allow 200 or 401 (password mismatch could be bcrypt issue)
       expect([200, 401]).toContain(response.status);
-      
+
+      // Login is now two-step: a correct password only triggers an OTP email.
+      // No tokens are issued until POST /api/auth/verify-login succeeds.
       if (response.status === 200) {
         expect(response.body).toHaveProperty('success', true);
-        expect(response.body).toHaveProperty('data');
-        expect(response.body.data).toHaveProperty('accessToken');
-        expect(response.body.data).toHaveProperty('user');
+        expect(response.body.data).toHaveProperty('requiresOtp', true);
+        expect(response.body.data).not.toHaveProperty('accessToken');
       }
     });
 

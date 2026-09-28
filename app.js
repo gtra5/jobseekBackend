@@ -100,12 +100,22 @@ app.use((req, res, next) => {
 });
 
 // Rate limiting
+// Chat and notifications get their own, more generous budget (realtimeLimiter,
+// below) since they're normal-use, higher-frequency routes. Skip them here so
+// the stricter general cap doesn't ALSO apply on top of that higher limit —
+// without this, every request to those routes counts against both limiters
+// at once, and the lower cap (this one) always wins regardless of how high
+// realtimeLimiter is set.
+const skipRealtimeRoutes = (req) =>
+  req.originalUrl.startsWith('/api/chat') || req.originalUrl.startsWith('/api/notifications');
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: process.env.NODE_ENV === 'development' ? 2000 : 100, // generous in dev, unchanged in prod
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipRealtimeRoutes,
 });
 app.use('/api/', limiter);
 
